@@ -591,7 +591,7 @@ protected:
           id = strings::trim(id, "/");
 
           Try<net::IP> ip =
-            net::IP::parse(offer.url().address().ip(), AF_INET);
+            net::IP::parse(offer.url().address().ip());
 
           CHECK_SOME(ip) << "Failed to parse Offer.url.address.ip";
 

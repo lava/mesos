@@ -312,9 +312,15 @@ Master::Master(
   // TODO(marco): The ip, port, hostname fields above are
   //     being deprecated; the code should be removed once
   //     the deprecation cycle is complete.
-  info_.set_ip(self().address.ip.in().get().s_addr);
+
+  if (self().address.ip.family() == AF_INET) {
+    info_.set_ip(self().address.ip.in().get().s_addr);
+  } else {
+    info_.set_ip(0);
+  }
 
   info_.set_port(self().address.port);
+
   info_.set_pid(self());
   info_.set_version(MESOS_VERSION);
 

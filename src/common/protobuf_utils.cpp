@@ -277,7 +277,11 @@ MasterInfo createMasterInfo(const UPID& pid)
   // be fixed. See MESOS-1201 for more details.
   // TODO(marco): `ip` and `port` are deprecated in favor of `address`;
   //     remove them both after the deprecation cycle.
-  info.set_ip(pid.address.ip.in().get().s_addr);
+  if (pid.address.ip.family() == AF_INET) {
+    info.set_ip(pid.address.ip.in().get().s_addr);
+  } else {
+    info.set_ip(0);
+  }
   info.set_port(pid.address.port);
 
   info.mutable_address()->set_ip(stringify(pid.address.ip));

@@ -52,9 +52,9 @@ Try<vector<Rule>> table()
     return Error(socket.error());
   }
 
-  // Dump all the routes (for IPv4) from kernel.
+  // Dump all the routes from kernel.
   struct nl_cache* c = nullptr;
-  int error = rtnl_route_alloc_cache(socket.get().get(), AF_INET, 0, &c);
+  int error = rtnl_route_alloc_cache(socket.get().get(), AF_UNSPEC, 0, &c);
   if (error != 0) {
     return Error(nl_geterror(error));
   }
@@ -72,8 +72,6 @@ Try<vector<Rule>> table()
     // table has only one hop (which is true in most environments).
     if (rtnl_route_get_table(route) == RT_TABLE_MAIN &&
         rtnl_route_get_nnexthops(route) == 1) {
-      CHECK_EQ(AF_INET, rtnl_route_get_family(route));
-
       // Get the destination IP network if exists.
       Option<net::IPNetwork> destination;
       struct nl_addr* dst = rtnl_route_get_dst(route);

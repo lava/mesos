@@ -302,7 +302,7 @@ Try<Nothing> machine(const MachineID& id)
 
   // Validate the IP field.
   if (!id.ip().empty()) {
-    Try<net::IP> ip = net::IP::parse(id.ip(), AF_INET);
+    Try<net::IP> ip = net::IP::parse(id.ip());
     if (ip.isError()) {
       return Error(ip.error());
     }
