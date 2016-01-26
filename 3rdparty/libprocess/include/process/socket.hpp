@@ -23,6 +23,7 @@
 #include <process/address.hpp>
 #include <process/future.hpp>
 
+#include <stout/ip.hpp>
 #include <stout/abort.hpp>
 #include <stout/nothing.hpp>
 #include <stout/try.hpp>
@@ -58,10 +59,12 @@ public:
   };
 
   /**
-   * Returns an instance of a `Socket` using the specified kind of
-   * implementation. All implementations will set the NONBLOCK and
-   * CLOEXEC options on the returned socket.
+   * Returns an instance of a `Socket` using the specified address
+   * family and kind of implementation.
+   * All implementations will set the NONBLOCK and CLOEXEC options
+   * on the returned socket.
    *
+   * @param family. The desired address family
    * @param kind Optional. The desired `Socket` implementation.
    * @param s Optional.  The file descriptor to wrap with the `Socket`.
    *
@@ -70,7 +73,22 @@ public:
    * TODO(josephw): MESOS-5729: Consider making the CLOEXEC option
    * configurable by the caller of the interface.
    */
+  __attribute__((deprecated))
   static Try<Socket> create(Kind kind = DEFAULT_KIND(), Option<int> s = None());
+
+  static Try<Socket> make(sa_family_t family, Kind kind = DEFAULT_KIND());
+
+  static Try<Socket> wrap(int sockfd, Kind kind = DEFAULT_KIND());
+
+  /**
+   * Returns ip address for given hostname, determined according to the Happy
+   * eyeballs algorithm outlined in RFC ???
+   *
+   * @todo: describe function and parameters
+   *
+   * @return Resolved ip of the remote host.
+   */
+  static Try<net::IP> resolve(const std::string& host, uint16_t port);
 
   /**
    * Returns the default `Kind` of implementation of `Socket`.
@@ -338,6 +356,8 @@ private:
   explicit Socket(std::shared_ptr<Impl>&& that) : impl(std::move(that)) {}
 
   explicit Socket(const std::shared_ptr<Impl>& that) : impl(that) {}
+
+  static Try<Socket> decorateSocket(int sockfd, Kind kind, bool owned);
 
   std::shared_ptr<Impl> impl;
 };

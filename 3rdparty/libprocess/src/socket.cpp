@@ -12,6 +12,9 @@
 
 #include <memory>
 #include <string>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
 
 #include <boost/shared_array.hpp>
 
@@ -32,23 +35,21 @@ using std::string;
 namespace process {
 namespace network {
 
-Try<Socket> Socket::create(Kind kind, Option<int> s)
-{
-  // If the caller passed in a file descriptor, we do
-  // not own its life cycle and must not close it.
-  bool owned = s.isNone();
+namespace internal {
 
-  if (owned) {
-    // Supported in Linux >= 2.6.27.
+Try<int> createNonblockingPrivateSocket(sa_family_t family) {
+      // Supported in Linux >= 2.6.27.
 #if defined(SOCK_NONBLOCK) && defined(SOCK_CLOEXEC)
     Try<int> fd =
-      network::socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+      network::socket(family, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
 
     if (fd.isError()) {
       return Error("Failed to create socket: " + fd.error());
     }
+
+    return fd;
 #else
-    Try<int> fd = network::socket(AF_INET, SOCK_STREAM, 0);
+    Try<int> fd = network::socket(family, SOCK_STREAM, 0);
     if (fd.isError()) {
       return Error("Failed to create socket: " + fd.error());
     }
@@ -64,18 +65,21 @@ Try<Socket> Socket::create(Kind kind, Option<int> s)
       os::close(fd.get());
       return Error("Failed to create socket, cloexec: " + cloexec.error());
     }
+
+    return fd;
 #endif
+}
 
-    s = fd.get();
-  }
+} // namespace internal {
 
-  switch (kind) {
+Try<Socket> Socket::decorateSocket(int sockfd, Kind kind, bool owned) {
+    switch (kind) {
     case POLL: {
       Try<std::shared_ptr<Socket::Impl>> socket =
-        PollSocketImpl::create(s.get());
+        PollSocketImpl::create(sockfd);
       if (socket.isError()) {
         if (owned) {
-          os::close(s.get());
+          os::close(sockfd);
         }
         return Error(socket.error());
       }
@@ -84,10 +88,10 @@ Try<Socket> Socket::create(Kind kind, Option<int> s)
 #ifdef USE_SSL_SOCKET
     case SSL: {
       Try<std::shared_ptr<Socket::Impl>> socket =
-        LibeventSSLSocketImpl::create(s.get());
+        LibeventSSLSocketImpl::create(sockfd);
       if (socket.isError()) {
         if (owned) {
-          os::close(s.get());
+          os::close(sockfd);
         }
         return Error(socket.error());
       }
@@ -100,6 +104,39 @@ Try<Socket> Socket::create(Kind kind, Option<int> s)
   }
 }
 
+Try<Socket> Socket::create(Kind kind, Option<int> s)
+{
+  // If the caller passed in a file descriptor, we do
+  // not own its life cycle and must not close it.
+  bool owned = s.isNone();
+
+  if (owned) {
+    Try<int> fd = internal::createNonblockingPrivateSocket(AF_INET);
+    if (fd.isError()) {
+      return Error(fd.error());
+    }
+
+    s = fd.get();
+  }
+
+  return decorateSocket(s.get(), kind, owned);
+}
+
+Try<Socket> Socket::make(sa_family_t family, Kind kind)
+{
+  Try<int> fd = internal::createNonblockingPrivateSocket(family);
+
+  if (fd.isError()) {
+    return Error(fd.error());
+  }
+
+  return decorateSocket(fd.get(), kind, true);
+}
+
+Try<Socket> Socket::wrap(int s, Kind kind)
+{
+  return decorateSocket(s, kind, false);
+}
 
 const Socket::Kind& Socket::DEFAULT_KIND()
 {

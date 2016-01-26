@@ -895,12 +895,12 @@ bool initialize(
 
   Clock::initialize(lambda::bind(&timedout, lambda::_1));
 
-  __address__ = Address::LOCALHOST_ANY();
+  __address__ = Address::LOCALHOST_ANY6();
 
   // Check environment for ip.
   Option<string> value = os::getenv("LIBPROCESS_IP");
   if (value.isSome()) {
-    Try<net::IP> ip = net::IP::parse(value.get(), AF_INET);
+    Try<net::IP> ip = net::IP::parse(value.get());
     if (ip.isError()) {
       LOG(FATAL) << "Parsing LIBPROCESS_IP=" << value.get()
                  << " failed: " << ip.error();
@@ -920,7 +920,7 @@ bool initialize(
   }
 
   // Create a "server" socket for communicating.
-  Try<Socket> create = Socket::create();
+  Try<Socket> create = Socket::make(__address__.ip.family());
   if (create.isError()) {
     PLOG(FATAL) << "Failed to construct server socket:" << create.error();
   }
@@ -949,7 +949,7 @@ bool initialize(
   // If advertised IP and port are present, use them instead.
   value = os::getenv("LIBPROCESS_ADVERTISE_IP");
   if (value.isSome()) {
-    Try<net::IP> ip = net::IP::parse(value.get(), AF_INET);
+    Try<net::IP> ip = net::IP::parse(value.get());
     if (ip.isError()) {
       LOG(FATAL) << "Parsing LIBPROCESS_ADVERTISE_IP=" << value.get()
                  << " failed: " << ip.error();
@@ -980,8 +980,10 @@ bool initialize(
                  << os::hstrerror(h_errno);
     }
 
-    // Lookup IP address of local hostname.
-    Try<net::IP> ip = net::getIP(hostname, __address__.ip.family());
+    // Lookup IP address of local hostname. This will depend on the preference
+    // configured for getaddrinfo(), i.e. in most cases it will prefer IPv6
+    // over IPv4 if both are present.
+    Try<net::IP> ip = net::getIP(hostname, AF_UNSPEC);
 
     if (ip.isError()) {
       EXIT(EXIT_FAILURE)
@@ -1452,8 +1454,13 @@ void SocketManager::link_connect(
     // If we allow downgrading from SSL to non-SSL, then retry as a
     // POLL socket.
     if (attempt_downgrade) {
+      Try<net::IP> ip = url.ip;
+      if (ip.isError()) {
+        ip = net::getIP(to);
+      }
+
       synchronized (mutex) {
-        Try<Socket> create = Socket::create(Socket::POLL);
+        Try<Socket> create = Socket::make(ip.get().family(), Socket::POLL);
         if (create.isError()) {
           VLOG(1) << "Failed to link, create socket: " << create.error();
           socket_manager->close(socket);
@@ -1547,7 +1554,7 @@ void SocketManager::link(
         // The kind of socket we create is passed in as an argument.
         // This allows us to support downgrading the connection type
         // from SSL to POLL if enabled.
-        Try<Socket> create = Socket::create(kind);
+        Try<Socket> create = Socket::make(to.address.family(), kind);
         if (create.isError()) {
           VLOG(1) << "Failed to link, create socket: " << create.error();
           return;
@@ -1573,7 +1580,7 @@ void SocketManager::link(
       } else if (remote == ProcessBase::RemoteConnection::RECONNECT) {
         // There is a persistent link already and the linker wants to
         // create a new socket anyway.
-        Try<Socket> create = Socket::create(kind);
+        Try<Socket> create = Socket::make(to.address.family(), kind);
         if (create.isError()) {
           VLOG(1) << "Failed to link, create socket: " << create.error();
           return;
@@ -1816,7 +1823,8 @@ void SocketManager::send_connect(
     // POLL socket.
     if (attempt_downgrade) {
       synchronized (mutex) {
-        Try<Socket> create = Socket::create(Socket::POLL);
+        Try<Socket> create =
+          Socket::make(message->to.address.ip.family(), Socket::POLL);
         if (create.isError()) {
           VLOG(1) << "Failed to link, create socket: " << create.error();
           socket_manager->close(socket);
@@ -1913,7 +1921,7 @@ void SocketManager::send(Message* message, const Socket::Kind& kind)
       // The kind of socket we create is passed in as an argument.
       // This allows us to support downgrading the connection type
       // from SSL to POLL if enabled.
-      Try<Socket> create = Socket::create(kind);
+      Try<Socket> create = Socket::make(address.ip.family(), kind);
       if (create.isError()) {
         VLOG(1) << "Failed to send, create socket: " << create.error();
         delete message;

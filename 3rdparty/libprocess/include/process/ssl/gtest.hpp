@@ -293,7 +293,7 @@ protected:
     set_environment_variables(environment);
 
     const Try<process::network::Socket> create =
-      process::network::Socket::create(process::network::Socket::SSL);
+      process::network::Socket::make(AF_INET, process::network::Socket::SSL);
 
     if (create.isError()) {
       return Error(create.error());

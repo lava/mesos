@@ -91,7 +91,7 @@ Future<Socket> accept(int fd)
       "Failed to turn off the Nagle algorithm: " + stringify(error));
   }
 
-  Try<Socket> socket = Socket::create(Socket::DEFAULT_KIND(), s);
+  Try<Socket> socket = Socket::wrap(s, Socket::DEFAULT_KIND());
   if (socket.isError()) {
     os::close(s);
     return Failure("Failed to accept, create socket: " + socket.error());

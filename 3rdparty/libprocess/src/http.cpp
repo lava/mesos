@@ -210,7 +210,27 @@ Try<URL> URL::parse(const string& urlString)
     return Error("Host not found in url");
   }
 
-  const vector<string> tokens = strings::tokenize(host, ":");
+  // According to RFC2732, if an IPv6 literal appears in a URL,
+  // it MUST be enclosed by '[' and ']', and these characters
+  // are otherwise reserved.
+  // This is slightly more liberal than required, in that we only
+  // care about square bracket pairs that start at the beginning.
+  vector<string> tokens;
+  if (host[0] == '[') { // IPv6 literal
+    size_t rbrakPos = host.find_first_of("]");
+    if (rbrakPos == string::npos) {
+      return Error("Invalid IPv6 literal in url");
+    }
+
+    tokens.push_back( host.substr(1, rbrakPos-1) );
+
+    size_t portPos = host.find_first_of(":", rbrakPos);
+    if (portPos != string::npos) {
+      tokens.push_back( host.substr(portPos+1) );
+    }
+  } else { // hostname or IPv4 literal
+    tokens = strings::tokenize(host, ":");
+  }
 
   if (tokens[0].empty()) {
     return Error("Host not found in url");
@@ -238,6 +258,12 @@ Try<URL> URL::parse(const string& urlString)
   }
 
   // TODO(tnachen): Support parsing query and fragment.
+
+  // Store ip literals
+  auto ip = net::IP::parse(tokens[0]);
+  if (ip.isSome()) {
+    return URL(scheme, ip.get(), port.get(), path);
+  }
 
   return URL(scheme, tokens[0], port.get(), path);
 }
@@ -655,6 +681,8 @@ string encode(const string& s)
       case '=':
       case '?':
       case '@':
+      case '[':
+      case ']':
       // Unsafe characters.
       case ' ':
       case '"':
@@ -668,8 +696,6 @@ string encode(const string& s)
       case '\\':
       case '^':
       case '~':
-      case '[':
-      case ']':
       case '`':
         // NOTE: The cast to unsigned int is needed.
         out << '%' << std::setfill('0') << std::setw(2) << std::hex
@@ -814,7 +840,13 @@ ostream& operator<<(ostream& stream, const URL& url)
   if (url.domain.isSome()) {
     stream << url.domain.get();
   } else if (url.ip.isSome()) {
-    stream << url.ip.get();
+    const net::IP& ip = url.ip.get();
+
+    if (ip.family() == AF_INET6) {
+      stream << "[" << ip << "]";
+    } else {
+      stream << ip;
+    }
   }
 
   if (url.port.isSome()) {
@@ -1235,7 +1267,7 @@ Future<Connection> connect(const URL& url)
   if (url.ip.isSome()) {
     address.ip = url.ip.get();
   } else {
-    Try<net::IP> ip = net::getIP(url.domain.get(), AF_INET);
+    Try<net::IP> ip = net::getIP(url.domain.get());
 
     if (ip.isError()) {
       return Failure("Failed to determine IP of domain '" +
@@ -1251,15 +1283,15 @@ Future<Connection> connect(const URL& url)
 
   address.port = url.port.get();
 
-  Try<Socket> socket = [&url]() -> Try<Socket> {
+  Try<Socket> socket = [&url, &address]() -> Try<Socket> {
     // Default to 'http' if no scheme was specified.
     if (url.scheme.isNone() || url.scheme == string("http")) {
-      return Socket::create(Socket::POLL);
+      return Socket::make(address.ip.family(), Socket::POLL);
     }
 
     if (url.scheme == string("https")) {
 #ifdef USE_SSL_SOCKET
-      return Socket::create(Socket::SSL);
+      return Socket::make(address.ip.family(), Socket::SSL);
 #else
       return Error("'https' scheme requires SSL enabled");
 #endif

@@ -114,17 +114,35 @@ istream& operator>>(istream& stream, UPID& pid)
 
   str = str.substr(index + 1);
 
-  index = str.find(':');
-
-  if (index != string::npos) {
-    host = str.substr(0, index);
-  } else {
+  if (str.empty()) {
     stream.setstate(ios_base::badbit);
     return stream;
   }
 
-  // TODO(evelinad): Extend this to support IPv6.
-  Try<net::IP> ip = net::getIP(host, AF_INET);
+  Try<net::IP> ip = Error("IP not initialized");
+
+  if (str.at(0) == '[') { // IPv6 literal
+    index = str.find(']');
+
+    if (index == string::npos || index == str.size() || str[index+1] != ':') {
+      stream.setstate(ios_base::badbit);
+      return stream;
+    }
+
+    ip = net::IP::parse(str.substr(1, index-1));
+    ++index;
+  } else { // hostname or IPv4 literal
+    index = str.find(':');
+
+    if (index != string::npos) {
+      host = str.substr(0, index);
+    } else {
+      stream.setstate(ios_base::badbit);
+      return stream;
+    }
+
+    ip = net::getIP(host);
+  }
 
   if (ip.isError()) {
     VLOG(2) << ip.error();

@@ -20,6 +20,7 @@
 
 #ifndef __WINDOWS__
 #include <arpa/inet.h>
+#include <netinet/in.h>
 #endif // __WINDOWS__
 
 #include <glog/logging.h>
@@ -48,24 +49,50 @@ public:
 
   Address(const net::IP& _ip, uint16_t _port) : ip(_ip), port(_port) {}
 
+  Address(const struct sockaddr_in& addr):
+    ip(addr.sin_addr),
+    port(ntohs(addr.sin_port))
+  {}
+
+  Address(const struct sockaddr_in6& addr):
+    ip(addr.sin6_addr),
+    port(ntohs(addr.sin6_port))
+  {}
+
   static Address LOCALHOST_ANY()
   {
     return Address(net::IP(INADDR_ANY), 0);
   }
 
-  static Try<Address> create(const struct sockaddr_storage& storage)
+  static Address LOCALHOST_ANY6()
   {
-    switch (storage.ss_family) {
+    return Address(net::IP(in6addr_any), 0);
+  }
+
+  static Try<Address> create(const struct sockaddr& addr)
+  {
+    switch (addr.sa_family) {
        case AF_INET: {
-         struct sockaddr_in addr = *(struct sockaddr_in*) &storage;
-         return Address(net::IP(addr.sin_addr), ntohs(addr.sin_port));
+         const struct sockaddr_in& addr4 =
+            reinterpret_cast<const struct sockaddr_in&>(addr);
+         return Address(addr4);
+       }
+       case AF_INET6: {
+          const struct sockaddr_in6& addr6 =
+              reinterpret_cast<const struct sockaddr_in6&>(addr);
+          return Address(addr6);
        }
        default: {
          return Error(
              "Unsupported family type: " +
-             stringify(storage.ss_family));
+             stringify(addr.sa_family));
        }
      }
+  }
+
+  static Try<Address> create(const struct sockaddr_storage& storage)
+  {
+    return Address::create(reinterpret_cast<const struct sockaddr&>(storage));
   }
 
   int family() const
@@ -82,7 +109,7 @@ public:
   // deal with slow name resolution.
   Try<std::string> hostname() const
   {
-    const Try<std::string> hostname = ip == net::IP(INADDR_ANY)
+    const Try<std::string> hostname = ip.isAny()
       ? net::hostname()
       : net::getHostname(ip);
 
@@ -100,6 +127,8 @@ public:
     switch (family()) {
       case AF_INET:
         return sizeof(sockaddr_in);
+      case AF_INET6:
+        return sizeof(sockaddr_in6);
       default:
         ABORT("Unsupported family type: " + stringify(family()));
     }
@@ -140,7 +169,17 @@ public:
 
 inline std::ostream& operator<<(std::ostream& stream, const Address& address)
 {
-  stream << address.ip << ":" << address.port;
+  switch(address.family()) {
+    case AF_INET:
+      stream << address.ip << ":" << address.port;
+      break;
+    case AF_INET6:
+      stream << "[" << address.ip << "]:" << address.port;
+      break;
+    default:
+      UNREACHABLE();
+  }
+
   return stream;
 }
 

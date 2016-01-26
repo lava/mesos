@@ -1308,6 +1308,22 @@ TEST(URLTest, ParseUrls)
   EXPECT_SOME_EQ("registry.docker.com", url.get().domain);
   EXPECT_EQ("/abc/1", url.get().path);
 
+  url = URL::parse("http://[2001:db8::1]");
+  EXPECT_SOME(url);
+  EXPECT_SOME(url.get().ip);
+  EXPECT_SOME_EQ("http", url.get().scheme);
+  EXPECT_SOME_EQ(80, url.get().port);
+  EXPECT_EQ("2001:db8::1", stringify(url.get().ip.get()));
+  EXPECT_EQ("/", url.get().path);
+
+  url = URL::parse("http://[2001:db8::1]:55/foo");
+  EXPECT_SOME(url);
+  EXPECT_SOME(url.get().ip);
+  EXPECT_SOME_EQ("http", url.get().scheme);
+  EXPECT_SOME_EQ(55, url.get().port);
+  EXPECT_EQ("2001:db8::1", stringify(url.get().ip.get()));
+  EXPECT_EQ("/foo", url.get().path);
+
   // Missing scheme.
   EXPECT_ERROR(URL::parse("mesos.com"));
   // Unknown scheme with no port.

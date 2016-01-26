@@ -923,7 +923,7 @@ void LibeventSSLSocketImpl::peek_callback(
     accept_SSL_callback(request);
   } else {
     // Downgrade to a non-SSL socket.
-    Try<Socket> create = Socket::create(Socket::POLL, fd);
+    Try<Socket> create = Socket::wrap(fd.get(), Socket::POLL);
     if (create.isError()) {
       request->promise.fail(create.error());
     } else {
