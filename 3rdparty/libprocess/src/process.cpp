@@ -1454,13 +1454,17 @@ void SocketManager::link_connect(
     // If we allow downgrading from SSL to non-SSL, then retry as a
     // POLL socket.
     if (attempt_downgrade) {
-      Try<net::IP> ip = url.ip;
-      if (ip.isError()) {
-        ip = net::getIP(to);
-      }
+      Try<net::IP> ip = net::getIP(to);
 
       synchronized (mutex) {
+        if (ip.isError()) {
+          VLOG(1) << "Failed to link, get ip from address: " << to;
+          socket_manager->close(socket);
+          return; // TODO(bennoe): Is the close() necessary here?
+        }
+
         Try<Socket> create = Socket::make(ip.get().family(), Socket::POLL);
+
         if (create.isError()) {
           VLOG(1) << "Failed to link, create socket: " << create.error();
           socket_manager->close(socket);
