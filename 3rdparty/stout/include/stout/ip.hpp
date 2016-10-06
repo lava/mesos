@@ -237,13 +237,11 @@ inline Try<IP> IP::parse(const std::string& value, int family)
   }
   case AF_UNSPEC: {
     Try<IP> ip4 = parse(value, AF_INET);
-
     if (ip4.isSome()) {
       return ip4;
     }
 
     Try<IP> ip6 = parse(value, AF_INET6);
-
     if (ip6.isSome()) {
       return ip6;
     }
@@ -274,7 +272,9 @@ inline Try<IP> IP::create(const struct sockaddr_storage& _storage)
   // Note that casting in the reverse direction (`const sockaddr*` to
   // `const sockaddr_storage*`) would NOT be safe, since the former might
   // not be aligned appropriately.
-  const auto* addr = reinterpret_cast<const struct sockaddr*>(&_storage);
+  const struct sockaddr* addr =
+    reinterpret_cast<const struct sockaddr*>(&_storage);
+
   return create(*addr);
 }
 
@@ -283,11 +283,15 @@ inline Try<IP> IP::create(const struct sockaddr& addr)
 {
   switch (addr.sa_family) {
     case AF_INET: {
-      const auto& addr4 = reinterpret_cast<const struct sockaddr_in&>(addr);
+      const struct sockaddr_in& addr4 =
+        reinterpret_cast<const struct sockaddr_in&>(addr);
+
       return IP(addr4.sin_addr);
     }
     case AF_INET6: {
-      const auto& addr6 = reinterpret_cast<const struct sockaddr_in6&>(addr);
+      const struct sockaddr_in6& addr6 =
+        reinterpret_cast<const struct sockaddr_in6&>(addr);
+
       return IP(addr6.sin6_addr);
     }
     default: {
@@ -316,7 +320,7 @@ inline std::ostream& operator<<(std::ostream& stream, const IP& ip)
     case AF_INET6: {
       char buffer[INET6_ADDRSTRLEN];
       struct in6_addr in6 = ip.in6().get();
-      if (inet_ntop(AF_INET6, &in6, buffer, sizeof(buffer)) == NULL) {
+      if (inet_ntop(AF_INET6, &in6, buffer, sizeof(buffer)) == nullptr) {
         ABORT("Failed to get human-readable IPv6: " + os::strerror(errno));
       }
       return stream << buffer;
@@ -525,21 +529,21 @@ inline Try<IPNetwork> IPNetwork::create(const IP& address, int prefix)
         return Error("IPv6 subnet prefix is larger than 128");
       }
 
-      in6_addr addr;
-      memset(&addr, 0, sizeof(addr));
+      in6_addr mask;
+      memset(&mask, 0, sizeof(mask));
       int i = 0;
 
       while (prefix >= 8) {
-        addr.s6_addr[i++] = 0xff;
+        mask.s6_addr[i++] = 0xff;
         prefix -= 8;
       }
 
       if (prefix > 0) {
-        uint8_t mask = 0xff << (8 - prefix);
-        addr.s6_addr[i] = mask;
+        uint8_t _mask = 0xff << (8 - prefix);
+        mask.s6_addr[i] = _mask;
       }
 
-      return IPNetwork(address, IP(addr));
+      return IPNetwork(address, IP(mask));
     }
     default: {
       UNREACHABLE();
