@@ -13,10 +13,9 @@
 #ifndef __PROCESS_RUN_QUEUE_HPP__
 #define __PROCESS_RUN_QUEUE_HPP__
 
-// At _configuration_ (i.e., build) time you can specify
-// RUN_QUEUE=... as an environment variable (i.e., just like CC or
-// CXXFLAGS) to pick the run queue implementation. If nothing is
-// specified we'll default to the LockingRunQueue.
+// Per default, the LockingRunQueue is used. This can be changed
+// to the LockFreeRunQueue at _configuration_ (i.e., build) time
+// by defining the macro LOCK_FREE_RUN_QUEUE.
 //
 // Alternatively we could have made this be a _runtime_ decision but
 // for performance reasons we wanted the run queue implementation to
