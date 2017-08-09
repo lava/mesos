@@ -8779,6 +8779,8 @@ void Master::_removeSlave(
     Framework* framework = getFramework(frameworkId);
 
     foreachvalue (Task* task, utils::copy(slave->tasks[frameworkId])) {
+      // TODO(bmahler): Differentiate between slave removal reasons
+      // (e.g. unhealthy vs. unregistered for maintenance).
       const StatusUpdate& update = protobuf::createStatusUpdate(
           task->framework_id(),
           task->slave_id(),
