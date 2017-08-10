@@ -1,4 +1,4 @@
-# Task Reasons
+# Task State Reasons
 
 Some TaskStatus messages will arrive with the `reason` field set to a value
 that can allow frameworks to display better error messages and to implement
@@ -33,61 +33,69 @@ the executor from sending its own status update messages.
 Below, a partition-aware framework means a framework which has the
 `Capability::PARTITION_AWARE` capability bit set in its FrameworkInfo.
 
+------
+------
 
-#### For state `TASK_FAILED`
+### For state `TASK_FAILED`
+
+------
 
 Reason: `REASON_CONTAINER_LAUNCH_FAILED`
 Source: `SOURCE_SLAVE`
 :   The task could not be launched because its container failed to launch.
 
-<br/>
+------
 
 Reason: `REASON_CONTAINER_LIMITATION_MEMORY`
 Source: `SOURCE_SLAVE`
 :   The container in which the task was running exceeded its memory allocation.
 
-<br/>
+------
 
 Reason: `REASON_CONTAINER_LAUNCH_FAILED`
 Source: `SOURCE_SLAVE`
 :   The task could not be launched because its container failed to launch.
 
-<br/>
+------
 
 Reason: `REASON_CONTAINER_LIMITATION_DISK`
 Source: `SOURCE_SLAVE`
 :   The container in which the task was running exceeded exceeded its
     disk quota.
 
-<br/>
+------
 
 Reason: `REASON_IO_SWITCHBOARD_EXITED`
 Source: `SOURCE_SLAVE`
 :   The I/O switchboard server terminated unexpectedly.
 
-<br/>
+------
 
 Reason: `REASON_EXECUTOR_REGISTRATION_TIMEOUT`
 Source: `SOURCE_SLAVE`
 :   The executor for this task didn't register with the agent within the
     allowed time limit.
 
-<br/>
+------
 
 Reason: `REASON_EXECUTOR_REREGISTRATION_TIMEOUT`
 Source: `SOURCE_SLAVE`
 :   The executor for this task lost connection and didn't re-register
     within the allowed time limit.
 
-<br/>
+------
 
 Reason: `REASON_EXECUTOR_TERMINATED`
 Source: `SOURCE_SLAVE`
 :   The tasks' executor terminated abnormally, and no more specific reason
     could be determined.
 
+------
+------
 
-#### For state `TASK_KILLED`:
+### For state `TASK_KILLED`:
+
+------
 
 Reason: `REASON_FRAMEWORK_REMOVED`
 Source: `SOURCE_MASTER`
@@ -95,49 +103,57 @@ Source: `SOURCE_MASTER`
     **Note:** The status update will be sent out before the task is
     actually killed.
 
-<br/>
+------
 
 Reason: `REASON_EXECUTOR_UNREGISTERED`
 Source: `SOURCE_SLAVE`
 :   The task was requested to be killed while the executor was still
     registering.
 
+------
+------
 
 ### For state `TASK_ERROR`:
+
+------
 
 Reason: `REASON_TASK_INVALID`
 Source: `SOURCE_MASTER`
 :   Task or resource validation checks failed.
 
-<br/>
+------
 
 Reason: `REASON_TASK_GROUP_INVALID`
 Source: `SOURCE_MASTER`
 :   Task group or resource validation checks failed.
 
-<br/>
+------
 
 Reason: `REASON_TASK_UNAUTHORIZED`
 Source: `SOURCE_MASTER`  or `SOURCE_SLAVE`
 :   - With `SOURCE_MASTER`: Task authorization failed on the master.
     - With `SOURCE_SLAVE`:  Task authorization failed on the slave.
 
-<br/>
+------
 
 Reason: `REASON_TASK_GROUP_UNAUTHORIZED`
 Source: `SOURCE_MASTER` or `SOURCE_SLAVE`
 :   - With `SOURCE_MASTER`: Task group authorization failed on the master.
     - With `SOURCE_SLAVE`:  Task group authorization failed on the slave.
 
+------
+------
 
-#### For state `TASK_LOST`:
+### For state `TASK_LOST`:
+
+------
 
 Reason: `REASON_SLAVE_DISCONNECTED`
 Source: `SOURCE_MASTER`
 :   The slave on which the task was running disconnected, and didn't
     reconnect in time.
 
-<br/>
+------
 
 Reason: `REASON_SLAVE_DISCONNECTED`
 State: `SOURCE_MASTER`
@@ -146,9 +162,9 @@ State: `SOURCE_MASTER`
     **Note:** For partition-aware frameworks, the state will be changed
     to `TASK_DROPPED` instead.
 
-<br/>
+------
 
-Reason: `REASON_MASTER_DISCONNECTED [x]`
+Reason: `REASON_MASTER_DISCONNECTED`
 State: `SOURCE_MASTER`
 :   The task was part of an accepted offer which couldn't be sent to the
     master, because it was disconnected.
@@ -157,13 +173,13 @@ State: `SOURCE_MASTER`
     **Note:** Despite the source being set to `SOURCE_MASTER`, the message
     is not sent from the master but locally from the scheduler driver.
 
-<br/>
+------
 
 Reason: `REASON_SLAVE_REMOVED`
 Source: `SOURCE_MASTER`
 :   The slave on which the task was running was removed.
 
-<br/>
+------
 
 Reason: `REASON_SLAVE_REMOVED`
 Source: `SOURCE_MASTER`
@@ -172,7 +188,7 @@ Source: `SOURCE_MASTER`
     **Note:** For partition-aware frameworks, the state will be changed
     to `TASK_DROPPED` instead.
 
-<br/>
+------
 
 Reason: `REASON_SLAVE_REMOVED`
 Source: `SOURCE_MASTER`
@@ -180,7 +196,7 @@ Source: `SOURCE_MASTER`
     **Note:** For partition-aware frameworks, the state will be changed
     to `TASK_UNREACHABLE` instead.
 
-<br/>
+------
 
 Reason: `REASON_RESOURCES_UNKNOWN`
 Source: `SOURCE_MASTER`
@@ -189,7 +205,7 @@ Source: `SOURCE_MASTER`
     **Note:** For partition-aware frameworks, the state will be changed
     to `TASK_DROPPED` instead.
 
-<br/>
+------
 
 Reason: `REASON_SLAVE_RESTARTED`
 Source: `SOURCE_SLAVE`
@@ -198,7 +214,7 @@ Source: `SOURCE_SLAVE`
     **Note:** For partition-aware frameworks, the state will be changed
     to `TASK_DROPPED` instead.
 
-<br/>
+------
 
 Reason: `REASON_CONTAINER_PREEMPTED`
 Source: `SOURCE_SLAVE`
@@ -207,7 +223,7 @@ Source: `SOURCE_SLAVE`
     **Note:** For  partition-aware frameworks, the state will be changed
     to `TASK_GONE` instead.
 
-<br/>
+------
 
 Reason: `REASON_CONTAINER_UPDATE_FAILED`
 Source: `SOURCE_SLAVE`
@@ -216,7 +232,7 @@ Source: `SOURCE_SLAVE`
     **Note:** For partition-aware frameworks, the state will be changed
     to `TASK_GONE` instead.
 
-<br/>
+------
 
 Reason: `REASON_EXECUTOR_TERMINATED`
 Source: `SOURCE_SLAVE`
@@ -226,7 +242,7 @@ Source: `SOURCE_SLAVE`
     **Note:** For partition-aware frameworks, the state will be changed
     to `TASK_DROPPED`instead.
 
-<br/>
+------
 
 Reason: `REASON_GC_ERROR`
 Source: `SOURCE_SLAVE`
@@ -235,7 +251,7 @@ Source: `SOURCE_SLAVE`
     **Note:** For partition-aware frameworks, the state will be changed
     to `TASK_DROPPED` instead.
 
-<br/>
+------
 
 Reason: `REASON_INVALID_OFFERS`
 Source: `SOURCE_MASTER`
@@ -243,62 +259,76 @@ Source: `SOURCE_MASTER`
     **Note:** For partition-aware frameworks, the state will be changed
     to `TASK_DROPPED` instead.
 
+------
+------
 
-#### For state `TASK_DROPPED`:
+### For state `TASK_DROPPED`:
+
+------
 
 Reason: `REASON_SLAVE_DISCONNECTED`
 Source: `SOURCE_MASTER`
 :   See `TASK_LOST`.
 
-<br/>
+------
 
 Reason: `REASON_SLAVE_REMOVED`
 Source: `SOURCE_MASTER`
 :   See `TASK_LOST`.
 
-<br/>
+------
 
 Reason: `REASON_SLAVE_RESTARTED`
 Source: `SOURCE_SLAVE`
 :   See `TASK_LOST`.
 
-<br/>
+------
 
 Reason: `REASON_RESOURCES_UNKNOWN`
 Source: `SOURCE_MASTER`
 :   See `TASK_LOST`.
 
-<br/>
+------
 
 Reason: `REASON_GC_ERROR`
 Source: `SOURCE_SLAVE`
 :   See `TASK_LOST`.
 
-<br/>
+------
 
 Reason: `REASON_INVALID_OFFERS`
 Source: `SOURCE_MASTER`
 :   See `TASK_LOST`.
 
-#### For state `TASK_UNREACHABLE`:
+------
+------
+
+### For state `TASK_UNREACHABLE`:
+
+------
 
 Reason: `REASON_SLAVE_REMOVED`
 Source: `SOURCE_MASTER`
 :   See `TASK_LOST`.
 
-#### For state `TASK_GONE`:
+------
+------
+
+### For state `TASK_GONE`:
+
+------
 
 Reason: `REASON_CONTAINER_UPDATE_FAILED`
 Source: `SOURCE_SLAVE`
 :   See `TASK_LOST`.
 
-<br/>
+------
 
 Reason: `REASON_CONTAINER_PREEMPTED`
 Source: `SOURCE_SLAVE`
 :   See `TASK_LOST`.
 
-<br/>
+------
 
 Reason: `REASON_EXECUTOR_PREEMPTED`
 Source: `SOURCE_SLAVE`
@@ -322,21 +352,22 @@ ignore messages with reason `REASON_RECONCILIATION`, and wait until the
 slave re-sends its original status update.
 
 
-#### Possible Reasons
+------
+------
 
 Reason: `REASON_TASK_CHECK_STATUS_UPDATED`
 State: Any non-terminal state (`TASK_STAGING`, `TASK_STARTING`, `TASK_RUNNING`, `TASK_KILLING`)
 Source: `SOURCE_SLAVE`
 :   A task check notified the slave that its state changed.
 
-<br/>
+------
 
 Reason: `REASON_TASK_HEALTH_CHECK_STATUS_UPDATED`
 State: Any non-terminal state (`TASK_STAGING`, `TASK_STARTING`, `TASK_RUNNING`, `TASK_KILLING`)
 Source: `SOURCE_SLAVE`
 :   A task health check notified the slave that its state changed.
 
-<br/>
+------
 
 Reason: `REASON_RECONCILIATION`
 State: Any state
