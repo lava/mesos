@@ -9,18 +9,77 @@ give a more detailed, human-readable error description.
 
 Not every status update does carry a reason.
 
+
+# Guideline for Framework Implementers
+
+A framework which implements its own executor is free to set the
+reason field to the status messages it generates.
+
+Note that executors can not generally rely on the fact that the
+scheduler will see the status update with the reason set
+by the executor. When sending status updates for task reconciliaton,
+the master erases the `reason`, 'message` and `data` fields from
+the original update and replaces the reason by `REASON_RECONCILIATION`.
+
+For a framework that wants to send custom data in some of its status
+updates, the correct way to do it is to enable slave checkpointing,
+ignore messages with reason `REASON_RECONCILIATION`, and wait until the
+slave re-sends its original status update.
+
+Note that most reasons describe conditions that can only be detected in
+the master or agent code, and will therefore accompany automatically
+generated status updates from either of these.
+
+Therefore, for consistency with the existing usages of the different task
+reasons, we recommend that executors restrict themselves to the following
+subset if they use a non-default reason in their status updates.
+
+------
+
+Reason: `REASON_TASK_CHECK_STATUS_UPDATED`
+:   For executors that support running task checks, it is recommended
+    to generate a status update with this reason every time the task check
+    status changes, together with a human-readable description of the change
+    in the `message` field.
+
+------
+
+Reason: `REASON_TASK_HEALTH_CHECK_STATUS_UPDATED`
+:   For executors that support running task health checks, it is recommended
+    to generate a status update with this reason every time the health check
+    status changes, together with a human-readable description of the change
+    in the `message` field.
+
+------
+
+Reason: `REASON_TASK_INVALID`
+:   For executors that implement their own task validation logic, this reason
+    can be used when the validation check fails, together with a human-readable
+    description of the failed check in the `message` field.
+
+------
+
+Reason: `REASON_TASK_UNAUTHORIZED`
+:   For executors that implement their own authorization logic, this reason
+    can be used when authorization fails, together with a human-readable
+    description in the `message` field.
+
+
+
+# Reference of reasons currently used in Mesos
+
 ## Deprecated Reasons
 
-Reason `REASON_COMMAND_EXECUTOR_FAILED` is deprecated and will be removed
+The reason `REASON_COMMAND_EXECUTOR_FAILED` is deprecated and will be removed
 in the future. Please do not use it.
+
 
 ## Unused Reasons
 
 The reasons `REASON_CONTAINER_LIMITATION`, `REASON_INVALID_FRAMEWORKID`,
 `REASON_SLAVE_UNKNOWN` and `REASON_TASK_UNKNOWN` are currently not used
-by mesos.
+by Mesos.
 
-Frameworks are free to use them in their own status messages.
 
 ## Bound Reasons
 
@@ -346,11 +405,6 @@ Note that status updates with `REASON_RECONCILIATION` set are not the same
 status updates that were originally sent from the framework, in particular
 the `status.data` field is erased.
 
-For a framework that wants to send custom data in some of its status
-updates, the correct way to do it is to enable slave checkpointing,
-ignore messages with reason `REASON_RECONCILIATION`, and wait until the
-slave re-sends its original status update.
-
 
 ------
 ------
@@ -359,6 +413,8 @@ Reason: `REASON_TASK_CHECK_STATUS_UPDATED`
 State: Any non-terminal state (`TASK_STAGING`, `TASK_STARTING`, `TASK_RUNNING`, `TASK_KILLING`)
 Source: `SOURCE_SLAVE`
 :   A task check notified the slave that its state changed.
+    **Note:** This reason is set by the executor, so for tasks that are running with a custom executor,
+    whether or not status updates with this reasons are sent depends on that executors implementation.
 
 ------
 
@@ -366,6 +422,8 @@ Reason: `REASON_TASK_HEALTH_CHECK_STATUS_UPDATED`
 State: Any non-terminal state (`TASK_STAGING`, `TASK_STARTING`, `TASK_RUNNING`, `TASK_KILLING`)
 Source: `SOURCE_SLAVE`
 :   A task health check notified the slave that its state changed.
+    **Note:** This reason is set by the executor, so for tasks that are running with a custom executor,
+    whether or not status updates with this reasons are sent depends on that executors implementation.
 
 ------
 
