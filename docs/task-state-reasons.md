@@ -1,3 +1,8 @@
+---
+title: Apache Mesos - Task State Reasons
+layout: documentation
+---
+
 # Task State Reasons
 
 Some TaskStatus messages will arrive with the `reason` field set to a value
@@ -10,63 +15,59 @@ give a more detailed, human-readable error description.
 Not every status update does carry a reason.
 
 
-# Guideline for Framework Implementers
+# Guidelines for Framework Implementers
 
 A framework which implements its own executor is free to set the
 reason field to the status messages it generates.
 
 Note that executors can not generally rely on the fact that the
 scheduler will see the status update with the reason set
-by the executor. When sending status updates for task reconciliaton,
-the master erases the `reason`, 'message` and `data` fields from
-the original update and replaces the reason by `REASON_RECONCILIATION`.
-
-For a framework that wants to send custom data in some of its status
-updates, the correct way to do it is to enable slave checkpointing,
-ignore messages with reason `REASON_RECONCILIATION`, and wait until the
-slave re-sends its original status update.
+by the executor, since the only the latest update
+for each different task state is stored and re-transmitted.
+See in particular the description of `REASON_RECONCILIATION` below.
 
 Note that most reasons describe conditions that can only be detected in
-the master or agent code, and will therefore accompany automatically
+the master or agent code, and will accompany automatically
 generated status updates from either of these.
 
-Therefore, for consistency with the existing usages of the different task
+For consistency with the existing usages of the different task
 reasons, we recommend that executors restrict themselves to the following
 subset if they use a non-default reason in their status updates.
 
-------
+<table class="table table-striped">
 
-Reason: `REASON_TASK_CHECK_STATUS_UPDATED`
-:   For executors that support running task checks, it is recommended
-    to generate a status update with this reason every time the task check
-    status changes, together with a human-readable description of the change
-    in the `message` field.
-
-------
-
-Reason: `REASON_TASK_HEALTH_CHECK_STATUS_UPDATED`
-:   For executors that support running task health checks, it is recommended
-    to generate a status update with this reason every time the health check
-    status changes, together with a human-readable description of the change
-    in the `message` field.
-
-------
-
-Reason: `REASON_TASK_INVALID`
-:   For executors that implement their own task validation logic, this reason
-    can be used when the validation check fails, together with a human-readable
-    description of the failed check in the `message` field.
-
-------
-
-Reason: `REASON_TASK_UNAUTHORIZED`
-:   For executors that implement their own authorization logic, this reason
-    can be used when authorization fails, together with a human-readable
-    description in the `message` field.
+<tr><td><code>     REASON_TASK_CHECK_STATUS_UPDATED
+</code></td><td>   For executors that support running task checks, it is recommended
+                   to generate a status update with this reason every time the task check
+                   status changes, together with a human-readable description of the change
+                   in the <code> message </code> field.
+</td></tr>
 
 
+<tr><td><code>     REASON_TASK_HEALTH_CHECK_STATUS_UPDATED`
+</code></td><td>   For executors that support running task health checks, it is recommended
+                   to generate a status update with this reason every time the health check
+                   status changes, together with a human-readable description of the change
+                   in the <code> message </code> field.
+</td></tr>
 
-# Reference of reasons currently used in Mesos
+
+<tr><td><code>     REASON_TASK_INVALID
+</code></td><td>   For executors that implement their own task validation logic, this reason
+                   can be used when the validation check fails, together with a human-readable
+                   description of the failed check in the <code> message </code> field.
+</td></tr>
+
+
+<tr><td><code>     REASON_TASK_UNAUTHORIZED
+</code></td><td>   For executors that implement their own authorization logic, this reason
+                   can be used when authorization fails, together with a human-readable
+                   description in the <code> message </code> field.
+</td></tr></table>
+
+
+
+# Reference of Reasons Currently Used in Mesos
 
 ## Deprecated Reasons
 
@@ -81,353 +82,353 @@ The reasons `REASON_CONTAINER_LIMITATION`, `REASON_INVALID_FRAMEWORKID`,
 by Mesos.
 
 
-## Bound Reasons
+## Reasons for Terminal Status Updates
 
 For these status updates, the reason indicates *why* the task state changed.
-Therefore, a given reason will always appear together with the same state.
+Typically, a given reason will always appear together
+with the same state.
 
 Typically they are generated by mesos when an error occurs that prevents
 the executor from sending its own status update messages.
 
 Below, a partition-aware framework means a framework which has the
 `Capability::PARTITION_AWARE` capability bit set in its FrameworkInfo.
+Messages generated on the master will have the `source` field set to
+`SOURCE_MASTER` and messages generated on the agent will have it set
+to `SOURCE_SLAVE`.
 
-------
-------
+As of Mesos 1.4, the following reasons are being used.
+
 
 ### For state `TASK_FAILED`
+#### In status updates generated on the agent:
 
-------
+<table class="table table-striped">
 
-Reason: `REASON_CONTAINER_LAUNCH_FAILED`
-Source: `SOURCE_SLAVE`
-:   The task could not be launched because its container failed to launch.
+<tr><td><code>     REASON_CONTAINER_LAUNCH_FAILED
+</code></td><td>   The task could not be launched because its container failed to launch.
+</td></tr>
 
-------
 
-Reason: `REASON_CONTAINER_LIMITATION_MEMORY`
-Source: `SOURCE_SLAVE`
-:   The container in which the task was running exceeded its memory allocation.
+<tr><td><code>     REASON_CONTAINER_LIMITATION_MEMORY
+</code></td><td>   The container in which the task was running exceeded its memory allocation.
+</td></tr>
 
-------
 
-Reason: `REASON_CONTAINER_LAUNCH_FAILED`
-Source: `SOURCE_SLAVE`
-:   The task could not be launched because its container failed to launch.
+<tr><td><code>     REASON_CONTAINER_LIMITATION_DISK
+</code></td><td>   The container in which the task was running exceeded its memory allocation.
+</td></tr>
 
-------
 
-Reason: `REASON_CONTAINER_LIMITATION_DISK`
-Source: `SOURCE_SLAVE`
-:   The container in which the task was running exceeded exceeded its
-    disk quota.
+<tr> <td><code>    REASON_IO_SWITCHBOARD_EXITED
+</code></td><td>   The I/O switchboard server terminated unexpectedly.
+</td></tr>
 
-------
 
-Reason: `REASON_IO_SWITCHBOARD_EXITED`
-Source: `SOURCE_SLAVE`
-:   The I/O switchboard server terminated unexpectedly.
+<tr><td><code>     REASON_EXECUTOR_REGISTRATION_TIMEOUT
+</code></td><td>   The executor for this task didn't register with the agent within the allowed time limit.
+</td></tr>
 
-------
 
-Reason: `REASON_EXECUTOR_REGISTRATION_TIMEOUT`
-Source: `SOURCE_SLAVE`
-:   The executor for this task didn't register with the agent within the
-    allowed time limit.
+<tr><td><code>     REASON_EXECUTOR_REREGISTRATION_TIMEOUT
+</code></td><td>   The executor for this task lost connection and didn't re-register within the allowed time limit.
+</td></tr>
 
-------
 
-Reason: `REASON_EXECUTOR_REREGISTRATION_TIMEOUT`
-Source: `SOURCE_SLAVE`
-:   The executor for this task lost connection and didn't re-register
-    within the allowed time limit.
+<tr><td><code>     REASON_EXECUTOR_TERMINATED
+</code></td><td>   The tasks' executor terminated abnormally, and no more specific reason
+                   could be determined.
+</td></tr></table>
 
-------
 
-Reason: `REASON_EXECUTOR_TERMINATED`
-Source: `SOURCE_SLAVE`
-:   The tasks' executor terminated abnormally, and no more specific reason
-    could be determined.
 
-------
-------
+### For state `TASK_KILLED`
+#### In status updates generated on the master:
 
-### For state `TASK_KILLED`:
+<table class="table table-striped">
 
-------
+<tr><td><code>     REASON_FRAMEWORK_REMOVED
+</code></td><td>   The framework to which this task belonged was removed.
 
-Reason: `REASON_FRAMEWORK_REMOVED`
-Source: `SOURCE_MASTER`
-:   The framework to which this task belonged was removed.
-    **Note:** The status update will be sent out before the task is
-    actually killed.
+<br/><strong>      Note:
+</strong>          The status update will be sent out before the task is
+                   actually killed.
+</td></tr></table>
 
-------
 
-Reason: `REASON_EXECUTOR_UNREGISTERED`
-Source: `SOURCE_SLAVE`
-:   The task was requested to be killed while the executor was still
-    registering.
 
-------
-------
+### For state `TASK_KILLED`
+#### In status updates generated on the agent:
 
-### For state `TASK_ERROR`:
+<table class="table table-striped">
 
-------
+<tr><td><code>     REASON_EXECUTOR_UNREGISTERED
+</code></td><td>   The task was requested to be killed while the executor was still
+                   registering.
+</td></tr></table>
 
-Reason: `REASON_TASK_INVALID`
-Source: `SOURCE_MASTER`
-:   Task or resource validation checks failed.
 
-------
 
-Reason: `REASON_TASK_GROUP_INVALID`
-Source: `SOURCE_MASTER`
-:   Task group or resource validation checks failed.
+### For state `TASK_ERROR`
+#### In status updates generated on the master:
 
-------
+<table class="table table-striped">
 
-Reason: `REASON_TASK_UNAUTHORIZED`
-Source: `SOURCE_MASTER`  or `SOURCE_SLAVE`
-:   - With `SOURCE_MASTER`: Task authorization failed on the master.
-    - With `SOURCE_SLAVE`:  Task authorization failed on the slave.
+<tr><td><code>     REASON_TASK_INVALID
+</code></td><td>   Task or resource validation checks failed.
+</td></tr>
 
-------
 
-Reason: `REASON_TASK_GROUP_UNAUTHORIZED`
-Source: `SOURCE_MASTER` or `SOURCE_SLAVE`
-:   - With `SOURCE_MASTER`: Task group authorization failed on the master.
-    - With `SOURCE_SLAVE`:  Task group authorization failed on the slave.
+<tr><td><code>     REASON_TASK_GROUP_INVALID
+</code></td><td>   Task group or resource validation checks failed.
+</td></tr>
 
-------
-------
 
-### For state `TASK_LOST`:
+<tr><td><code>     REASON_TASK_UNAUTHORIZED
+</code></td><td>   Task authorization failed on the master.
+</td></tr>
 
-------
 
-Reason: `REASON_SLAVE_DISCONNECTED`
-Source: `SOURCE_MASTER`
-:   The slave on which the task was running disconnected, and didn't
-    reconnect in time.
+<tr><td><code>     REASON_TASK_GROUP_UNAUTHORIZED
+</code></td><td>   Task group authorization failed on the master.
+</td></tr></table>
 
-------
 
-Reason: `REASON_SLAVE_DISCONNECTED`
-State: `SOURCE_MASTER`
-:   The task was part of an accepted offer, but the slave sending the
-    offer disconnected in the meantime.
-    **Note:** For partition-aware frameworks, the state will be changed
-    to `TASK_DROPPED` instead.
+#### In status updates generated on the slave:
 
-------
+<table class="table table-striped">
 
-Reason: `REASON_MASTER_DISCONNECTED`
-State: `SOURCE_MASTER`
-:   The task was part of an accepted offer which couldn't be sent to the
-    master, because it was disconnected.
-    **Note:** For partition-aware frameworks, the state will be changed
-    to `TASK_DROPPED` instead.
-    **Note:** Despite the source being set to `SOURCE_MASTER`, the message
-    is not sent from the master but locally from the scheduler driver.
+<tr><td><code>     REASON_TASK_UNAUTHORIZED
+</code></td><td>   Task authorization failed on the slave.
+</td></tr>
 
-------
 
-Reason: `REASON_SLAVE_REMOVED`
-Source: `SOURCE_MASTER`
-:   The slave on which the task was running was removed.
+<tr><td><code>     REASON_TASK_GROUP_UNAUTHORIZED
+</code></td><td>   Task group authorization failed on the slave.
+</td></tr></table>
 
-------
 
-Reason: `REASON_SLAVE_REMOVED`
-Source: `SOURCE_MASTER`
-:   The task was part of an accepted offer, but the slave sending the offer
-    was disconnected in the meantime.
-    **Note:** For partition-aware frameworks, the state will be changed
-    to `TASK_DROPPED` instead.
 
-------
+### For state `TASK_LOST`
+#### In status updates generated on the master:
 
-Reason: `REASON_SLAVE_REMOVED`
-Source: `SOURCE_MASTER`
-:   The slave on which the task was running was marked unreachable.
-    **Note:** For partition-aware frameworks, the state will be changed
-    to `TASK_UNREACHABLE` instead.
+<table class="table table-striped">
 
-------
+<tr><td rowspan="2">
+<code>             REASON_SLAVE_DISCONNECTED
+</code></td><td>   The slave on which the task was running disconnected, and didn't reconnect in time.
+</td></tr>
+<tr><td>           The task was part of an accepted offer, but the slave
+                   sending the offer disconnected in the meantime.
+<br/><strong>      Note:
+</strong>          For partition-aware frameworks, the state will be
+                   to <code> TASK_DROPPED </code> instead.
+</td></tr>
 
-Reason: `REASON_RESOURCES_UNKNOWN`
-Source: `SOURCE_MASTER`
-:   The task was part of an accepted offer which used checkpointed resources
-    that are not known to the master.
-    **Note:** For partition-aware frameworks, the state will be changed
-    to `TASK_DROPPED` instead.
 
-------
+<tr><td><code>     REASON_MASTER_DISCONNECTED
+</code></td><td>   The task was part of an accepted offer which couldn't be sent to the master, because it was disconnected.
+<br/><strong>      Note:
+</strong>          For partition-aware frameworks, the state will be to <code> TASK_DROPPED </code> instead.
+<br/><strong>      Note:
+</strong>          Despite the source being set to <code> SOURCE_MASTER </code>,
+                   the message is not sent from the master but locally from the
+                   scheduler driver.
+</td></tr>
 
-Reason: `REASON_SLAVE_RESTARTED`
-Source: `SOURCE_SLAVE`
-:   The task was launched during an agent restart, and never got forwarded
-    to the executor.
-    **Note:** For partition-aware frameworks, the state will be changed
-    to `TASK_DROPPED` instead.
 
-------
+<tr><td rowspan="3">
+<code>             REASON_SLAVE_REMOVED
+</code></td><td>   The slave on which the task was running was removed.
+</td></tr>
+<tr><td>           The task was part of an accepted offer, but the slave sending the offer
+                   was disconnected in the meantime.
+<br/><strong>      Note:
+</strong>          For partition-aware frameworks, the state will be
+                   to <code> TASK_DROPPED </code> instead.
+</td></tr>
+<tr><td>           The slave on which the task was running was marked unreachable.
+<br/><strong>      Note:
+</strong>          For partition-aware frameworks, the state will be
+                   to <code> TASK_UNREACHABLE </code> instead.
+</td></tr>
 
-Reason: `REASON_CONTAINER_PREEMPTED`
-Source: `SOURCE_SLAVE`
-:   The container in which the task was running was pre-empted by
-    a QoS correction.
-    **Note:** For  partition-aware frameworks, the state will be changed
-    to `TASK_GONE` instead.
 
-------
+<tr><td><code>     REASON_RESOURCES_UNKNOWN
+</code></td><td>   The task was part of an accepted offer which used checkpointed resources
+                   that are not known to the master.
+<br/><strong>      Note:
+</strong>          For partition-aware frameworks, the state will be to <code> TASK_DROPPED </code> instead.
+</td></tr></table>
 
-Reason: `REASON_CONTAINER_UPDATE_FAILED`
-Source: `SOURCE_SLAVE`
-:   The container in which the task was running was discarded because a
-    resource update failed.
-    **Note:** For partition-aware frameworks, the state will be changed
-    to `TASK_GONE` instead.
 
-------
 
-Reason: `REASON_EXECUTOR_TERMINATED`
-Source: `SOURCE_SLAVE`
-:   The executor which was supposed to execute this task was already
-    terminated, or the slave receives an instruction to kill the task before
-    the executor was started.
-    **Note:** For partition-aware frameworks, the state will be changed
-    to `TASK_DROPPED`instead.
+### For state `TASK_LOST`
+#### In status updates generated on the slave:
 
-------
+<table class="table table-striped">
 
-Reason: `REASON_GC_ERROR`
-Source: `SOURCE_SLAVE`
-:   A directory to be used by this task was scheduled for GC and it could not
-    be unscheduled.
-    **Note:** For partition-aware frameworks, the state will be changed
-    to `TASK_DROPPED` instead.
+<tr><td><code>     REASON_SLAVE_RESTARTED
+</code></td><td>   The task was launched during an agent restart, and never got forwarded
+                   to the executor.
+<br/><strong>      Note:
+</strong>          For partition-aware frameworks, the state will be
+                   to <code> TASK_DROPPED </code> instead.
+</td></tr>
 
-------
 
-Reason: `REASON_INVALID_OFFERS`
-Source: `SOURCE_MASTER`
-:   This task belonged to an accepted offer that didn't pass validation checks.
-    **Note:** For partition-aware frameworks, the state will be changed
-    to `TASK_DROPPED` instead.
+<tr><td><code>     REASON_CONTAINER_PREEMPTED
+</code></td><td>   The container in which the task was running was pre-empted by
+                   a QoS correction.
+<br/><strong>      Note:
+</strong>          For  partition-aware frameworks, the state will be changed
+                   to <code> TASK_GONE </code> instead.
+</td></tr>
 
-------
-------
+
+<tr><td><code>     REASON_CONTAINER_UPDATE_FAILED
+</code></td><td>   The container in which the task was running was discarded because a
+                   resource update failed.
+<br/><strong>      Note:
+</strong>          For partition-aware frameworks, the state will be <code> TASK_GONE </code> instead.
+</td></tr>
+
+
+<tr><td><code>     REASON_EXECUTOR_TERMINATED
+</code></td><td>   The executor which was supposed to execute this task was already
+                   terminated, or the slave receives an instruction to kill the task before
+                   the executor was started.
+<br/><strong>      Note:
+</strong>          For partition-aware frameworks, the state will be
+                   to <code> TASK_DROPPED </code> instead.
+</td></tr>
+
+
+<tr><td><code>     REASON_GC_ERROR
+</code></td><td>   A directory to be used by this task was scheduled for GC and it could not
+                   be unscheduled.
+<br/><strong>      Note:
+</strong>          For partition-aware frameworks, the state will be
+                   to <code> TASK_DROPPED </code> instead.
+</td></tr>
+
+
+<tr><td><code>     REASON_INVALID_OFFERS
+</code></td><td>   This task belonged to an accepted offer that didn't pass validation checks.
+<br/><strong>      Note:
+</strong>          For partition-aware frameworks, the state will be
+                   to <code> TASK_DROPPED </code> instead.
+</td></tr></table>
+
+
 
 ### For state `TASK_DROPPED`:
+#### In status updates generated on the master:
 
-------
+<table class="table table-striped">
 
-Reason: `REASON_SLAVE_DISCONNECTED`
-Source: `SOURCE_MASTER`
-:   See `TASK_LOST`.
+<tr><td><code>     REASON_SLAVE_DISCONNECTED
+</code></td><td>   See <code>TASK_LOST</code>.
+</td></tr>
 
-------
 
-Reason: `REASON_SLAVE_REMOVED`
-Source: `SOURCE_MASTER`
-:   See `TASK_LOST`.
+<tr><td><code>     REASON_SLAVE_REMOVED
+</code></td><td>   See <code>TASK_LOST</code>.
+</td></tr>
 
-------
 
-Reason: `REASON_SLAVE_RESTARTED`
-Source: `SOURCE_SLAVE`
-:   See `TASK_LOST`.
+<tr><td><code>     REASON_RESOURCES_UNKNOWN
+</code></td><td>   See <code>TASK_LOST</code>.
+</td></tr></table>
 
-------
 
-Reason: `REASON_RESOURCES_UNKNOWN`
-Source: `SOURCE_MASTER`
-:   See `TASK_LOST`.
+#### In status updates generated on the agent:
 
-------
+<table class="table table-striped">
 
-Reason: `REASON_GC_ERROR`
-Source: `SOURCE_SLAVE`
-:   See `TASK_LOST`.
+<tr><td><code>     REASON_SLAVE_RESTARTED
+</code></td><td>   See <code> TASK_LOST </code>.
+</td></tr>
 
-------
 
-Reason: `REASON_INVALID_OFFERS`
-Source: `SOURCE_MASTER`
-:   See `TASK_LOST`.
+<tr><td><code>     REASON_GC_ERROR
+</code></td><td>   See <code> TASK_LOST </code>.
+</td></tr>
 
-------
-------
+
+<tr><td><code>     REASON_INVALID_OFFERS
+</code></td><td>   See <code> TASK_LOST </code>.
+</td></tr></table>
+
+
 
 ### For state `TASK_UNREACHABLE`:
+#### In status updates generated on the master:
 
-------
+<table class="table table-striped">
 
-Reason: `REASON_SLAVE_REMOVED`
-Source: `SOURCE_MASTER`
-:   See `TASK_LOST`.
-
-------
-------
-
-### For state `TASK_GONE`:
-
-------
-
-Reason: `REASON_CONTAINER_UPDATE_FAILED`
-Source: `SOURCE_SLAVE`
-:   See `TASK_LOST`.
-
-------
-
-Reason: `REASON_CONTAINER_PREEMPTED`
-Source: `SOURCE_SLAVE`
-:   See `TASK_LOST`.
-
-------
-
-Reason: `REASON_EXECUTOR_PREEMPTED`
-Source: `SOURCE_SLAVE`
-:   Renamed to `REASON_CONTAINER_PREEMPTED`
-    in mesos 0.26
+<tr><td><code>     REASON_SLAVE_REMOVED
+</code></td><td>   See <code> TASK_LOST <code>.
+</td></tr></table>
 
 
-## Unbound Reasons
+
+### For state `TASK_GONE`
+#### In status updates generated on the agent:
+
+<table class="table table-striped">
+
+<tr><td><code>     REASON_CONTAINER_UPDATE_FAILED
+</code></td><td>   See <code> TASK_LOST </code>.
+</td></tr>
+
+<tr><td><code>     REASON_CONTAINER_PREEMPTED
+</code></td><td>   See <code> TASK_LOST </code>.
+</td></tr>
+
+<tr><td><code>     REASON_EXECUTOR_PREEMPTED
+</code></td><td>   Renamed to <code> REASON_CONTAINER_PREEMPTED </code> in Mesos 0.26.
+</td></tr></table>
+
+
+
+## Reasons for Non-Terminal Status Updates
 
 These reasons do not cause a state change, and will be sent along with the
 last known state of the task. The reason field indicates *why* the status
 update was sent.
 
-Note that status updates with `REASON_RECONCILIATION` set are not the same
-status updates that were originally sent from the framework, in particular
-the `status.data` field is erased.
+
+<table class="table table-striped">
+
+<tr><td><code>     REASON_RECONCILIATION
+</code></td><td>   A framework requested implicit or explicit reconciliation for this task.
+<br/><strong>      Note
+</strong>          Status updates with this reason are not the same status updates that were originally
+                   but rather a modified copy that is re-sent from the master. In particular
+                   the <code> data </code> and <code> message </code> fields are erased and the
+                   original <code> reason </code> field is overwritten by <code> REASON_RECONCILIATION </code>.
+</td>
+
+<tr><td><code>     REASON_TASK_CHECK_STATUS_UPDATED
+</code></td><td>   A task check notified the agent that its state changed.
+<br/><strong>      Note:
+</strong>          This reason is set by the executor, so for tasks that are running with a custom executor,
+                   whether or not status updates with this reasons are sent depends on that executors implementation.
+<strong>           Note:
+</strong>          Currently, when using one of the built-in executors, this reason only be used with <code> TASK_RUNNING </code>
+                   status updates.
+</td></tr>
 
 
-------
-------
+<tr><td><code>     REASON_TASK_HEALTH_CHECK_STATUS_UPDATED
+</code></td><td>   A task health check notified the agent that its state changed.
+<br/><strong>      Note:
+</strong>          This reason is set by the executor, so for tasks that are running with a custom executor,
+                   whether or not status updates with this reasons are sent depends on that executors implementation.
+<strong>           Note:
+</strong>          Currently, when using one of the built-in executors, this reason only be used with <code> TASK_RUNNING </code>
+                   status updates.
+</td></tr>
 
-Reason: `REASON_TASK_CHECK_STATUS_UPDATED`
-State: Any non-terminal state (`TASK_STAGING`, `TASK_STARTING`, `TASK_RUNNING`, `TASK_KILLING`)
-Source: `SOURCE_SLAVE`
-:   A task check notified the slave that its state changed.
-    **Note:** This reason is set by the executor, so for tasks that are running with a custom executor,
-    whether or not status updates with this reasons are sent depends on that executors implementation.
-
-------
-
-Reason: `REASON_TASK_HEALTH_CHECK_STATUS_UPDATED`
-State: Any non-terminal state (`TASK_STAGING`, `TASK_STARTING`, `TASK_RUNNING`, `TASK_KILLING`)
-Source: `SOURCE_SLAVE`
-:   A task health check notified the slave that its state changed.
-    **Note:** This reason is set by the executor, so for tasks that are running with a custom executor,
-    whether or not status updates with this reasons are sent depends on that executors implementation.
-
-------
-
-Reason: `REASON_RECONCILIATION`
-State: Any state
-Source: `SOURCE_MASTER`
-:   A framework requested implicit or explicit reconciliation for this task.
+</table>
