@@ -136,6 +136,11 @@ public:
 
   void launchTask(ExecutorDriver* driver, const TaskInfo& task)
   {
+    TaskStatus starting;
+    starting.mutable_task_id()->CopyFrom(task.task_id());
+    starting.set_state(TASK_STARTING);
+    driver->sendStatusUpdate(starting);
+
     if (run.isSome()) {
       // TODO(alexr): Use `protobuf::createTaskStatus()`
       // instead of manually setting fields.

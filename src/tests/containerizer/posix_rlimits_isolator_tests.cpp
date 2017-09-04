@@ -179,13 +179,19 @@ TEST_F(PosixRLimitsIsolatorTest, UnsetLimits)
 
   container->mutable_rlimit_info()->CopyFrom(rlimitInfo);
 
+  Future<TaskStatus> statusStarting;
   Future<TaskStatus> statusRunning;
   Future<TaskStatus> statusFinal;
   EXPECT_CALL(sched, statusUpdate(&driver, _))
+    .WillOnce(FutureArg<1>(&statusStarting))
     .WillOnce(FutureArg<1>(&statusRunning))
     .WillOnce(FutureArg<1>(&statusFinal));
 
   driver.launchTasks(offers.get()[0].id(), {task});
+
+  AWAIT_READY(statusStarting);
+  EXPECT_EQ(task.task_id(), statusStarting->task_id());
+  EXPECT_EQ(TASK_STARTING, statusStarting->state());
 
   AWAIT_READY(statusRunning);
   EXPECT_EQ(task.task_id(), statusRunning->task_id());
@@ -321,13 +327,19 @@ TEST_F(PosixRLimitsIsolatorTest, TaskExceedingLimit)
 
   container->mutable_rlimit_info()->CopyFrom(rlimitInfo);
 
+  Future<TaskStatus> statusStarting;
   Future<TaskStatus> statusRunning;
   Future<TaskStatus> statusFailed;
   EXPECT_CALL(sched, statusUpdate(&driver, _))
+    .WillOnce(FutureArg<1>(&statusStarting))
     .WillOnce(FutureArg<1>(&statusRunning))
     .WillOnce(FutureArg<1>(&statusFailed));
 
   driver.launchTasks(offers.get()[0].id(), {task});
+
+  AWAIT_READY(statusStarting);
+  EXPECT_EQ(task.task_id(), statusStarting->task_id());
+  EXPECT_EQ(TASK_STARTING, statusStarting->state());
 
   AWAIT_READY(statusRunning);
   EXPECT_EQ(task.task_id(), statusRunning->task_id());

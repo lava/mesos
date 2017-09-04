@@ -509,6 +509,9 @@ protected:
   {
     CHECK_EQ(SUBSCRIBED, state);
 
+    TaskStatus starting = createTaskStatus(task.task_id(), TASK_STARTING);
+    forward(starting);
+
     if (launched) {
       TaskStatus status = createTaskStatus(
           task.task_id(),
@@ -1016,8 +1019,7 @@ private:
     // If a check for the task has been defined, `check_status` field in each
     // task status must be set to a valid `CheckStatusInfo` message even if
     // there is no check status available yet.
-    CHECK(taskData.isSome());
-    if (taskData->taskInfo.has_check()) {
+    if (taskData.isSome() && taskData->taskInfo.has_check()) {
       CheckStatusInfo checkStatusInfo;
       checkStatusInfo.set_type(taskData->taskInfo.check().type());
       switch (taskData->taskInfo.check().type()) {

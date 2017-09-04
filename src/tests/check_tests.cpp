@@ -288,12 +288,14 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(
   const v1::Offer& offer = offers->offers(0);
   const v1::AgentID& agentId = offer.agent_id();
 
+  Future<Event::Update> updateTaskStarting;
   Future<Event::Update> updateTaskRunning;
   Future<Event::Update> updateCheckResult;
   Future<Event::Update> updateExplicitReconciliation;
   Future<Event::Update> updateImplicitReconciliation;
 
   EXPECT_CALL(*scheduler, update(_, _))
+    .WillOnce(FutureArg<1>(&updateTaskStarting))
     .WillOnce(FutureArg<1>(&updateTaskRunning))
     .WillOnce(FutureArg<1>(&updateCheckResult))
     .WillOnce(FutureArg<1>(&updateExplicitReconciliation))
@@ -321,6 +323,9 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(
   variable->set_value("1");
 
   launchTask(&mesos, offer, taskInfo);
+
+  AWAIT_READY(updateTaskStarting);
+  acknowledge(&mesos, frameworkId, updateTaskStarting->status());
 
   AWAIT_READY(updateTaskRunning);
   const v1::TaskStatus& taskRunning = updateTaskRunning->status();
@@ -437,12 +442,14 @@ TEST_F(CommandExecutorCheckTest, CommandCheckStatusChange)
   const v1::Offer& offer = offers->offers(0);
   const v1::AgentID& agentId = offer.agent_id();
 
+  Future<Event::Update> updateTaskStarting;
   Future<Event::Update> updateTaskRunning;
   Future<Event::Update> updateCheckResult;
   Future<Event::Update> updateCheckResultChanged;
   Future<Event::Update> updateCheckResultBack;
 
   EXPECT_CALL(*scheduler, update(_, _))
+    .WillOnce(FutureArg<1>(&updateTaskStarting))
     .WillOnce(FutureArg<1>(&updateTaskRunning))
     .WillOnce(FutureArg<1>(&updateCheckResult))
     .WillOnce(FutureArg<1>(&updateCheckResultChanged))
@@ -463,6 +470,9 @@ TEST_F(CommandExecutorCheckTest, CommandCheckStatusChange)
       FLAPPING_CHECK_COMMAND(path::join(os::getcwd(), "XXXXXX")));
 
   launchTask(&mesos, offer, taskInfo);
+
+  AWAIT_READY(updateTaskStarting);
+  acknowledge(&mesos, frameworkId, updateTaskStarting->status());
 
   AWAIT_READY(updateTaskRunning);
   ASSERT_EQ(TASK_RUNNING, updateTaskRunning->status().state());
@@ -557,10 +567,12 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(
   const v1::Offer& offer = offers->offers(0);
   const v1::AgentID& agentId = offer.agent_id();
 
+  Future<Event::Update> updateTaskStarting;
   Future<Event::Update> updateTaskRunning;
   Future<Event::Update> updateCheckResult;
 
   EXPECT_CALL(*scheduler, update(_, _))
+    .WillOnce(FutureArg<1>(&updateTaskStarting))
     .WillOnce(FutureArg<1>(&updateTaskRunning))
     .WillOnce(FutureArg<1>(&updateCheckResult))
     .WillRepeatedly(Return()); // Ignore subsequent updates.
@@ -589,6 +601,9 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(
   checkCommand->set_value("exit $" + envKey);
 
   launchTask(&mesos, offer, taskInfo);
+
+  AWAIT_READY(updateTaskStarting);
+  acknowledge(&mesos, frameworkId, updateTaskStarting->status());
 
   AWAIT_READY(updateTaskRunning);
   const v1::TaskStatus& taskRunning = updateTaskRunning->status();
@@ -660,10 +675,12 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(
   const v1::Offer& offer = offers->offers(0);
   const v1::AgentID& agentId = offer.agent_id();
 
+  Future<Event::Update> updateTaskStarting;
   Future<Event::Update> updateTaskRunning;
   Future<Event::Update> updateCheckResult;
 
   EXPECT_CALL(*scheduler, update(_, _))
+    .WillOnce(FutureArg<1>(&updateTaskStarting))
     .WillOnce(FutureArg<1>(&updateTaskRunning))
     .WillOnce(FutureArg<1>(&updateCheckResult))
     .WillRepeatedly(Return()); // Ignore subsequent updates.
@@ -686,6 +703,9 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(
   checkCommand->set_value("ls " + filename);
 
   launchTask(&mesos, offer, taskInfo);
+
+  AWAIT_READY(updateTaskStarting);
+  acknowledge(&mesos, frameworkId, updateTaskStarting->status());
 
   AWAIT_READY(updateTaskRunning);
   const v1::TaskStatus& taskRunning = updateTaskRunning->status();
@@ -781,11 +801,13 @@ TEST_F(CommandExecutorCheckTest, CommandCheckTimeout)
   const v1::Offer& offer = offers->offers(0);
   const v1::AgentID& agentId = offer.agent_id();
 
+  Future<Event::Update> updateTaskStarting;
   Future<Event::Update> updateTaskRunning;
   Future<Event::Update> updateCheckResult;
   Future<Event::Update> updateCheckResultTimeout;
 
   EXPECT_CALL(*scheduler, update(_, _))
+    .WillOnce(FutureArg<1>(&updateTaskStarting))
     .WillOnce(FutureArg<1>(&updateTaskRunning))
     .WillOnce(FutureArg<1>(&updateCheckResult))
     .WillOnce(FutureArg<1>(&updateCheckResultTimeout))
@@ -806,6 +828,9 @@ TEST_F(CommandExecutorCheckTest, CommandCheckTimeout)
       STALLING_CHECK_COMMAND(path::join(os::getcwd(), "XXXXXX")));
 
   launchTask(&mesos, offer, taskInfo);
+
+  AWAIT_READY(updateTaskStarting);
+  acknowledge(&mesos, frameworkId, updateTaskStarting->status());
 
   AWAIT_READY(updateTaskRunning);
   ASSERT_EQ(TASK_RUNNING, updateTaskRunning->status().state());
@@ -886,12 +911,14 @@ TEST_F(CommandExecutorCheckTest, CommandCheckAndHealthCheckNoShadowing)
   const v1::Offer& offer = offers->offers(0);
   const v1::AgentID& agentId = offer.agent_id();
 
+  Future<Event::Update> updateTaskStarting;
   Future<Event::Update> updateTaskRunning;
   Future<Event::Update> updateCheckResult;
   Future<Event::Update> updateHealthResult;
   Future<Event::Update> updateImplicitReconciliation;
 
   EXPECT_CALL(*scheduler, update(_, _))
+    .WillOnce(FutureArg<1>(&updateTaskStarting))
     .WillOnce(FutureArg<1>(&updateTaskRunning))
     .WillOnce(FutureArg<1>(&updateCheckResult))
     .WillOnce(FutureArg<1>(&updateHealthResult))
@@ -927,6 +954,9 @@ TEST_F(CommandExecutorCheckTest, CommandCheckAndHealthCheckNoShadowing)
   healthCheckInfo->mutable_command()->set_value("exit 0");
 
   launchTask(&mesos, offer, taskInfo);
+
+  AWAIT_READY(updateTaskStarting);
+  acknowledge(&mesos, frameworkId, updateTaskStarting->status());
 
   AWAIT_READY(updateTaskRunning);
   ASSERT_EQ(TASK_RUNNING, updateTaskRunning->status().state());
@@ -1038,9 +1068,11 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(CommandExecutorCheckTest, HTTPCheckDelivered)
   const v1::Offer& offer = offers->offers(0);
   const v1::AgentID& agentId = offer.agent_id();
 
+  Future<v1::scheduler::Event::Update> updateTaskStarting;
   Future<v1::scheduler::Event::Update> updateTaskRunning;
   Future<v1::scheduler::Event::Update> updateCheckResult;
   EXPECT_CALL(*scheduler, update(_, _))
+    .WillOnce(FutureArg<1>(&updateTaskStarting))
     .WillOnce(FutureArg<1>(&updateTaskRunning))
     .WillOnce(FutureArg<1>(&updateCheckResult))
     .WillRepeatedly(Return()); // Ignore subsequent updates.
@@ -1068,6 +1100,9 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(CommandExecutorCheckTest, HTTPCheckDelivered)
   checkInfo->set_interval_seconds(0);
 
   launchTask(&mesos, offer, taskInfo);
+
+  AWAIT_READY(updateTaskStarting);
+  acknowledge(&mesos, frameworkId, updateTaskStarting->status());
 
   AWAIT_READY(updateTaskRunning);
   const v1::TaskStatus& taskRunning = updateTaskRunning->status();
@@ -1171,9 +1206,11 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(CommandExecutorCheckTest, TCPCheckDelivered)
   const v1::Offer& offer = offers->offers(0);
   const v1::AgentID& agentId = offer.agent_id();
 
+  Future<v1::scheduler::Event::Update> updateTaskStarting;
   Future<v1::scheduler::Event::Update> updateTaskRunning;
   Future<v1::scheduler::Event::Update> updateCheckResult;
   EXPECT_CALL(*scheduler, update(_, _))
+    .WillOnce(FutureArg<1>(&updateTaskStarting))
     .WillOnce(FutureArg<1>(&updateTaskRunning))
     .WillOnce(FutureArg<1>(&updateCheckResult))
     .WillRepeatedly(Return()); // Ignore subsequent updates.
@@ -1200,6 +1237,9 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(CommandExecutorCheckTest, TCPCheckDelivered)
   checkInfo->set_interval_seconds(0);
 
   launchTask(&mesos, offer, taskInfo);
+
+  AWAIT_READY(updateTaskStarting);
+  acknowledge(&mesos, frameworkId, updateTaskStarting->status());
 
   AWAIT_READY(updateTaskRunning);
   const v1::TaskStatus& taskRunning = updateTaskRunning->status();
@@ -1381,12 +1421,14 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(
   const v1::Offer& offer = offers->offers(0);
   const v1::AgentID& agentId = offer.agent_id();
 
+  Future<Event::Update> updateTaskStarting;
   Future<Event::Update> updateTaskRunning;
   Future<Event::Update> updateCheckResult;
   Future<Event::Update> updateExplicitReconciliation;
   Future<Event::Update> updateImplicitReconciliation;
 
   EXPECT_CALL(*scheduler, update(_, _))
+    .WillOnce(FutureArg<1>(&updateTaskStarting))
     .WillOnce(FutureArg<1>(&updateTaskRunning))
     .WillOnce(FutureArg<1>(&updateCheckResult))
     .WillOnce(FutureArg<1>(&updateExplicitReconciliation))
@@ -2197,12 +2239,14 @@ TEST_F(DefaultExecutorCheckTest, CommandCheckAndHealthCheckNoShadowing)
   const v1::Offer& offer = offers->offers(0);
   const v1::AgentID& agentId = offer.agent_id();
 
+  Future<Event::Update> updateTaskStarting;
   Future<Event::Update> updateTaskRunning;
   Future<Event::Update> updateCheckResult;
   Future<Event::Update> updateHealthResult;
   Future<Event::Update> updateImplicitReconciliation;
 
   EXPECT_CALL(*scheduler, update(_, _))
+    .WillOnce(FutureArg<1>(&updateTaskStarting))
     .WillOnce(FutureArg<1>(&updateTaskRunning))
     .WillOnce(FutureArg<1>(&updateCheckResult))
     .WillOnce(FutureArg<1>(&updateHealthResult))
@@ -2235,6 +2279,9 @@ TEST_F(DefaultExecutorCheckTest, CommandCheckAndHealthCheckNoShadowing)
   healthCheckInfo->mutable_command()->set_value("exit 0");
 
   launchTask(&mesos, offer, taskInfo);
+
+  AWAIT_READY(updateTaskStarting);
+  acknowledge(&mesos, frameworkId, updateTaskStarting->status());
 
   AWAIT_READY(updateTaskRunning);
   ASSERT_EQ(TASK_RUNNING, updateTaskRunning->status().state());
