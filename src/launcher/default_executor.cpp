@@ -373,6 +373,11 @@ protected:
     CHECK_EQ(SUBSCRIBED, state);
     CHECK_SOME(executorContainerId);
 
+    foreach (const TaskInfo& task, taskGroup.tasks()) {
+      const TaskStatus status = createTaskStatus(task.task_id(), TASK_STARTING);
+      forward(status);
+    }
+
     // Determine the container IP in order to set `MESOS_CONTAINER_IP`
     // environment variable for each of the tasks being launched.
     // Libprocess has already determined the IP address associated
