@@ -8323,7 +8323,8 @@ TEST_P(MasterTestPrePostReservationRefinement, LaunchGroup)
 
   Future<v1::scheduler::Event::Update> update;
   EXPECT_CALL(*scheduler, update(_, _))
-    .WillOnce(FutureArg<1>(&update));
+    .WillOnce(FutureArg<1>(&update))
+    .WillRepeatedly(Return());  // Ignore subsequent TASK_RUNNING updates
 
   {
     Call call;
@@ -8347,7 +8348,7 @@ TEST_P(MasterTestPrePostReservationRefinement, LaunchGroup)
 
   AWAIT_READY(update);
 
-  EXPECT_EQ(TASK_RUNNING, update->status().state());
+  EXPECT_EQ(TASK_STARTING, update->status().state());
   EXPECT_EQ(taskInfo.task_id(), update->status().task_id());
   EXPECT_TRUE(update->status().has_timestamp());
 

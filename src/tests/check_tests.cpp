@@ -603,7 +603,12 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(
   launchTask(&mesos, offer, taskInfo);
 
   AWAIT_READY(updateTaskStarting);
-  acknowledge(&mesos, frameworkId, updateTaskStarting->status());
+  const v1::TaskStatus& taskStarting = updateTaskStarting->status();
+
+  ASSERT_EQ(TASK_STARTING, taskStarting.state());
+  EXPECT_EQ(taskInfo.task_id(), taskStarting.task_id());
+
+  acknowledge(&mesos, frameworkId, taskStarting);
 
   AWAIT_READY(updateTaskRunning);
   const v1::TaskStatus& taskRunning = updateTaskRunning->status();
@@ -705,7 +710,12 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(
   launchTask(&mesos, offer, taskInfo);
 
   AWAIT_READY(updateTaskStarting);
-  acknowledge(&mesos, frameworkId, updateTaskStarting->status());
+  const v1::TaskStatus& taskStarting = updateTaskStarting->status();
+
+  ASSERT_EQ(TASK_STARTING, taskStarting.state());
+  EXPECT_EQ(taskInfo.task_id(), taskStarting.task_id());
+
+  acknowledge(&mesos, frameworkId, taskStarting);
 
   AWAIT_READY(updateTaskRunning);
   const v1::TaskStatus& taskRunning = updateTaskRunning->status();
@@ -830,6 +840,9 @@ TEST_F(CommandExecutorCheckTest, CommandCheckTimeout)
   launchTask(&mesos, offer, taskInfo);
 
   AWAIT_READY(updateTaskStarting);
+  ASSERT_EQ(TASK_STARTING, updateTaskStarting->status().state());
+  EXPECT_EQ(taskInfo.task_id(), updateTaskStarting->status().task_id());
+
   acknowledge(&mesos, frameworkId, updateTaskStarting->status());
 
   AWAIT_READY(updateTaskRunning);
@@ -1457,6 +1470,11 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(
 
   launchTaskGroup(&mesos, offer, executorInfo, taskGroup);
 
+  AWAIT_READY(updateTaskStarting);
+  ASSERT_EQ(TASK_STARTING, taskStarting.state());
+
+  acknowledge(&mesos, frameworkId, taskStarting);
+
   AWAIT_READY(updateTaskRunning);
   const v1::TaskStatus& taskRunning = updateTaskRunning->status();
 
@@ -1617,12 +1635,14 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(
   const v1::Offer& offer = offers->offers(0);
   const v1::AgentID& agentId = offer.agent_id();
 
+  Future<Event::Update> updateTaskStarting;
   Future<Event::Update> updateTaskRunning;
   Future<Event::Update> updateCheckResult;
   Future<Event::Update> updateCheckResultChanged;
   Future<Event::Update> updateCheckResultBack;
 
   EXPECT_CALL(*scheduler, update(_, _))
+    .WillOnce(FutureArg<1>(&updateTaskStarting))
     .WillOnce(FutureArg<1>(&updateTaskRunning))
     .WillOnce(FutureArg<1>(&updateCheckResult))
     .WillOnce(FutureArg<1>(&updateCheckResultChanged))
@@ -1643,6 +1663,12 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(
   taskGroup.add_tasks()->CopyFrom(taskInfo);
 
   launchTaskGroup(&mesos, offer, executorInfo, taskGroup);
+
+  AWAIT_READY(updateTaskStarting);
+  ASSERT_EQ(TASK_STARTING, updateTaskStarting->status().state());
+  EXPECT_EQ(taskInfo.task_id(), updateTaskStarting->status().task_id());
+
+  acknowledge(&mesos, frameworkId, updateTaskStarting->status());
 
   AWAIT_READY(updateTaskRunning);
   ASSERT_EQ(TASK_RUNNING, updateTaskRunning->status().state());
@@ -2417,11 +2443,12 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(
   const v1::Offer& offer = offers->offers(0);
   const v1::AgentID& agentId = offer.agent_id();
 
-  Future<v1::scheduler::Event::Update> updates[4];
+  constexpr int EXPECTED_UPDATES = 5;
+  Future<v1::scheduler::Event::Update> updates[EXPECTED_UPDATES];
 
   {
     testing::InSequence dummy;
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < EXPECTED_UPDATES; i++) {
       EXPECT_CALL(*scheduler, update(_, _))
         .WillOnce(FutureArg<1>(&updates[i]));
     }
@@ -2453,7 +2480,7 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(
   taskStages.put(taskInfo1.task_id(), Stage::INITIAL);
   taskStages.put(taskInfo2.task_id(), Stage::INITIAL);
 
-  for (int i = 0; i < 4; i++ ) {
+  for (int i = 0; i < EXPECTED_UPDATES; i++ ) {
     AWAIT_READY(updates[i]);
 
     const v1::TaskStatus& taskStatus = updates[i]->status();
@@ -2463,7 +2490,8 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(
 
     switch (taskStage.get()) {
       case Stage::INITIAL: {
-        ASSERT_EQ(TASK_RUNNING, taskStatus.state());
+        TaskState state = taskStatus.state();
+        ASSERT_TRUE(state == TASK_RUNNING  || state == TASK_STARTING);
         ASSERT_TRUE(taskStatus.check_status().has_tcp());
         ASSERT_FALSE(taskStatus.check_status().tcp().has_succeeded());
 
@@ -2560,9 +2588,11 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(DefaultExecutorCheckTest, HTTPCheckDelivered)
   const v1::Offer& offer = offers->offers(0);
   const v1::AgentID& agentId = offer.agent_id();
 
+  Future<v1::scheduler::Event::Update> updateTaskStarting;
   Future<v1::scheduler::Event::Update> updateTaskRunning;
   Future<v1::scheduler::Event::Update> updateCheckResult;
   EXPECT_CALL(*scheduler, update(_, _))
+    .WillOnce(FutureArg<1>(&updateTaskStarting))
     .WillOnce(FutureArg<1>(&updateTaskRunning))
     .WillOnce(FutureArg<1>(&updateCheckResult))
     .WillRepeatedly(Return()); // Ignore subsequent updates.
@@ -2590,6 +2620,12 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(DefaultExecutorCheckTest, HTTPCheckDelivered)
   taskGroup.add_tasks()->CopyFrom(taskInfo);
 
   launchTaskGroup(&mesos, offer, executorInfo, taskGroup);
+
+  AWAIT_READY(updateTaskStarting);
+  ASSERT_EQ(TASK_STARTING, updateTaskRunning->status().state());
+
+  // Acknowledge (to be able to get the next update).
+  acknowledge(&mesos, frameworkId, taskStarting);
 
   AWAIT_READY(updateTaskRunning);
   const v1::TaskStatus& taskRunning = updateTaskRunning->status();
@@ -2709,9 +2745,11 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(DefaultExecutorCheckTest, TCPCheckDelivered)
   const v1::Offer& offer = offers->offers(0);
   const v1::AgentID& agentId = offer.agent_id();
 
+  Future<v1::scheduler::Event::Update> updateTaskStarting;
   Future<v1::scheduler::Event::Update> updateTaskRunning;
   Future<v1::scheduler::Event::Update> updateCheckResult;
   EXPECT_CALL(*scheduler, update(_, _))
+    .WillOnce(FutureArg<1>(&updateTaskStarting))
     .WillOnce(FutureArg<1>(&updateTaskRunning))
     .WillOnce(FutureArg<1>(&updateCheckResult))
     .WillRepeatedly(Return()); // Ignore subsequent updates.
@@ -2738,6 +2776,12 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(DefaultExecutorCheckTest, TCPCheckDelivered)
   taskGroup.add_tasks()->CopyFrom(taskInfo);
 
   launchTaskGroup(&mesos, offer, executorInfo, taskGroup);
+
+  AWAIT_READY(updateTaskStarting);
+  ASSERT_EQ(TASK_STARTING, updateTaskStarting->status().state());
+  // Acknowledge (to be able to get the next update).
+  acknowledge(&mesos, frameworkId, taskStarting);
+
 
   AWAIT_READY(updateTaskRunning);
   const v1::TaskStatus& taskRunning = updateTaskRunning->status();
