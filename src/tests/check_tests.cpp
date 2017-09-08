@@ -1252,7 +1252,12 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(CommandExecutorCheckTest, TCPCheckDelivered)
   launchTask(&mesos, offer, taskInfo);
 
   AWAIT_READY(updateTaskStarting);
-  acknowledge(&mesos, frameworkId, updateTaskStarting->status());
+  const v1::TaskStatus& taskStarting = updateTaskStarting->status();
+
+  ASSERT_EQ(TASK_STARTING, taskStarting.state());
+  EXPECT_EQ(taskInfo.task_id(), taskStarting.task_id());
+
+  acknowledge(&mesos, frameworkId, taskStarting);
 
   AWAIT_READY(updateTaskRunning);
   const v1::TaskStatus& taskRunning = updateTaskRunning->status();
@@ -1471,7 +1476,10 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(
   launchTaskGroup(&mesos, offer, executorInfo, taskGroup);
 
   AWAIT_READY(updateTaskStarting);
+  const v1::TaskStatus& taskStarting = updateTaskStarting->status();
+
   ASSERT_EQ(TASK_STARTING, taskStarting.state());
+  EXPECT_EQ(taskInfo.task_id(), taskStarting.task_id());
 
   acknowledge(&mesos, frameworkId, taskStarting);
 
@@ -1804,10 +1812,12 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(
   const v1::Offer& offer = offers->offers(0);
   const v1::AgentID& agentId = offer.agent_id();
 
+  Future<Event::Update> updateTaskStarting;
   Future<Event::Update> updateTaskRunning;
   Future<Event::Update> updateCheckResult;
 
   EXPECT_CALL(*scheduler, update(_, _))
+    .WillOnce(FutureArg<1>(&updateTaskStarting))
     .WillOnce(FutureArg<1>(&updateTaskRunning))
     .WillOnce(FutureArg<1>(&updateCheckResult))
     .WillRepeatedly(Return()); // Ignore subsequent updates.
@@ -1836,6 +1846,14 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(
   taskGroup.add_tasks()->CopyFrom(taskInfo);
 
   launchTaskGroup(&mesos, offer, executorInfo, taskGroup);
+
+  AWAIT_READY(updateTaskStarting);
+  const v1::TaskStatus& taskStarting = updateTaskStarting->status();
+
+  ASSERT_EQ(TASK_STARTING, taskStarting.state());
+  EXPECT_EQ(taskInfo.task_id(), taskStarting.task_id());
+
+  acknowledge(&mesos, frameworkId, taskStarting);
 
   AWAIT_READY(updateTaskRunning);
   const v1::TaskStatus& taskRunning = updateTaskRunning->status();
@@ -1949,10 +1967,12 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(
   const v1::Offer& offer = offers->offers(0);
   const v1::AgentID& agentId = offer.agent_id();
 
+  Future<Event::Update> updateTaskStarting;
   Future<Event::Update> updateTaskRunning;
   Future<Event::Update> updateCheckResult;
 
   EXPECT_CALL(*scheduler, update(_, _))
+    .WillOnce(FutureArg<1>(&updateTaskStarting))
     .WillOnce(FutureArg<1>(&updateTaskRunning))
     .WillOnce(FutureArg<1>(&updateCheckResult))
     .WillRepeatedly(Return()); // Ignore subsequent updates.
@@ -2003,6 +2023,14 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(
   taskGroup.add_tasks()->CopyFrom(taskInfo);
 
   launchTaskGroup(&mesos, offer, executorInfo, taskGroup);
+
+  AWAIT_READY(updateTaskStarting);
+  const v1::TaskStatus& taskStarting = updateTaskStarting->status();
+
+  ASSERT_EQ(TASK_STARTING, taskStarting.state());
+  EXPECT_EQ(taskInfo.task_id(), taskStarting.task_id());
+
+  acknowledge(&mesos, frameworkId, taskStarting);
 
   AWAIT_READY(updateTaskRunning);
   const v1::TaskStatus& taskRunning = updateTaskRunning->status();
@@ -2117,11 +2145,13 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(DefaultExecutorCheckTest, CommandCheckTimeout)
   const v1::Offer& offer = offers->offers(0);
   const v1::AgentID& agentId = offer.agent_id();
 
+  Future<Event::Update> updateTaskStarting;
   Future<Event::Update> updateTaskRunning;
   Future<Event::Update> updateCheckResult;
   Future<Event::Update> updateCheckResultTimeout;
 
   EXPECT_CALL(*scheduler, update(_, _))
+    .WillOnce(FutureArg<1>(&updateTaskStarting))
     .WillOnce(FutureArg<1>(&updateTaskRunning))
     .WillOnce(FutureArg<1>(&updateCheckResult))
     .WillOnce(FutureArg<1>(&updateCheckResultTimeout))
@@ -2142,6 +2172,12 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(DefaultExecutorCheckTest, CommandCheckTimeout)
   taskGroup.add_tasks()->CopyFrom(taskInfo);
 
   launchTaskGroup(&mesos, offer, executorInfo, taskGroup);
+
+  AWAIT_READY(updateTaskStarting);
+  ASSERT_EQ(TASK_STARTING, updateTaskStarting->status().state());
+  EXPECT_EQ(taskInfo.task_id(), updateTaskStarting->status().task_id());
+
+  acknowledge(&mesos, frameworkId, updateTaskStarting->status());
 
   AWAIT_READY(updateTaskRunning);
   ASSERT_EQ(TASK_RUNNING, updateTaskRunning->status().state());
@@ -2443,12 +2479,12 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(
   const v1::Offer& offer = offers->offers(0);
   const v1::AgentID& agentId = offer.agent_id();
 
-  constexpr int EXPECTED_UPDATES = 5;
-  Future<v1::scheduler::Event::Update> updates[EXPECTED_UPDATES];
+  constexpr int EXPECTED_UPDATE_COUNT = 5;
+  Future<v1::scheduler::Event::Update> updates[EXPECTED_UPDATE_COUNT];
 
   {
     testing::InSequence dummy;
-    for (int i = 0; i < EXPECTED_UPDATES; i++) {
+    for (int i = 0; i < EXPECTED_UPDATE_COUNT; i++) {
       EXPECT_CALL(*scheduler, update(_, _))
         .WillOnce(FutureArg<1>(&updates[i]));
     }
@@ -2475,12 +2511,12 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(
 
   launchTaskGroup(&mesos, offer, executorInfo, taskGroup);
 
-  enum class Stage { INITIAL, RUNNING, CHECKED };
+  enum class Stage { STARTING, INITIAL, RUNNING, CHECKED };
   hashmap<v1::TaskID, Stage> taskStages;
-  taskStages.put(taskInfo1.task_id(), Stage::INITIAL);
-  taskStages.put(taskInfo2.task_id(), Stage::INITIAL);
+  taskStages.put(taskInfo1.task_id(), Stage::STARTING);
+  taskStages.put(taskInfo2.task_id(), Stage::STARTING);
 
-  for (int i = 0; i < EXPECTED_UPDATES; i++ ) {
+  for (int i = 0; i < EXPECTED_UPDATE_COUNT; i++ ) {
     AWAIT_READY(updates[i]);
 
     const v1::TaskStatus& taskStatus = updates[i]->status();
@@ -2489,9 +2525,17 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(
     ASSERT_SOME(taskStage);
 
     switch (taskStage.get()) {
+      case Stage::STARTING: {
+        v1::TaskState state = taskStatus.state();
+        ASSERT_TRUE(state == v1::TASK_STARTING);
+
+        taskStages.put(taskStatus.task_id(), Stage::INITIAL);
+
+        break;
+      }
       case Stage::INITIAL: {
-        TaskState state = taskStatus.state();
-        ASSERT_TRUE(state == TASK_RUNNING  || state == TASK_STARTING);
+        v1::TaskState state = taskStatus.state();
+        ASSERT_TRUE(state == v1::TASK_RUNNING);
         ASSERT_TRUE(taskStatus.check_status().has_tcp());
         ASSERT_FALSE(taskStatus.check_status().tcp().has_succeeded());
 
@@ -2622,7 +2666,9 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(DefaultExecutorCheckTest, HTTPCheckDelivered)
   launchTaskGroup(&mesos, offer, executorInfo, taskGroup);
 
   AWAIT_READY(updateTaskStarting);
-  ASSERT_EQ(TASK_STARTING, updateTaskRunning->status().state());
+  const v1::TaskStatus& taskStarting = updateTaskStarting->status();
+
+  ASSERT_EQ(TASK_STARTING, taskStarting.state());
 
   // Acknowledge (to be able to get the next update).
   acknowledge(&mesos, frameworkId, taskStarting);
@@ -2778,7 +2824,11 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(DefaultExecutorCheckTest, TCPCheckDelivered)
   launchTaskGroup(&mesos, offer, executorInfo, taskGroup);
 
   AWAIT_READY(updateTaskStarting);
-  ASSERT_EQ(TASK_STARTING, updateTaskStarting->status().state());
+  const v1::TaskStatus& taskStarting = updateTaskStarting->status();
+
+  ASSERT_EQ(TASK_STARTING, taskStarting.state());
+  EXPECT_EQ(taskInfo.task_id(), taskStarting.task_id());
+
   // Acknowledge (to be able to get the next update).
   acknowledge(&mesos, frameworkId, taskStarting);
 

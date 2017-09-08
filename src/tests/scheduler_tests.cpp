@@ -698,9 +698,23 @@ TEST_P(SchedulerTest, TaskGroupRunning)
 
     Call::Acknowledge* acknowledge = call.mutable_acknowledge();
     acknowledge->mutable_task_id()->CopyFrom(
-        runningUpdate1->status().task_id());
+        startingUpdate1->status().task_id());
     acknowledge->mutable_agent_id()->CopyFrom(offers->offers(0).agent_id());
-    acknowledge->set_uuid(runningUpdate1->status().uuid());
+    acknowledge->set_uuid(startingUpdate1->status().uuid());
+
+    mesos.send(call);
+  }
+
+  {
+    Call call;
+    call.mutable_framework_id()->CopyFrom(frameworkId);
+    call.set_type(Call::ACKNOWLEDGE);
+
+    Call::Acknowledge* acknowledge = call.mutable_acknowledge();
+    acknowledge->mutable_task_id()->CopyFrom(
+        startingUpdate2->status().task_id());
+    acknowledge->mutable_agent_id()->CopyFrom(offers->offers(0).agent_id());
+    acknowledge->set_uuid(startingUpdate2->status().uuid());
 
     mesos.send(call);
   }
@@ -710,8 +724,6 @@ TEST_P(SchedulerTest, TaskGroupRunning)
 
   AWAIT_READY(runningUpdate2);
   ASSERT_EQ(v1::TASK_RUNNING, runningUpdate2->status().state());
-
-  const hashset<v1::TaskID> tasks{task1.task_id(), task2.task_id()};
 
   // TASK_RUNNING updates for the tasks in a
   // task group can be received in any order.

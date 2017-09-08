@@ -109,6 +109,26 @@ protected:
 };
 
 
+void defaultExecutorAcknowledge(
+  v1::scheduler::TestMesos& mesos,
+  const v1::FrameworkID& frameworkId,
+  const v1::AgentID& agentId,
+  const v1::TaskStatus& status)
+{
+  Call call;
+  call.mutable_framework_id()->CopyFrom(frameworkId);
+  call.set_type(Call::ACKNOWLEDGE);
+
+  Call::Acknowledge* acknowledge = call.mutable_acknowledge();
+
+  acknowledge->mutable_task_id()->CopyFrom(status.task_id());
+  acknowledge->mutable_agent_id()->CopyFrom(agentId);
+  acknowledge->set_uuid(status.uuid());
+
+  mesos.send(call);
+}
+
+
 // These tests are parameterized by the containerizers enabled on the agent.
 INSTANTIATE_TEST_CASE_P(
     MesosContainerizer,
@@ -192,9 +212,11 @@ TEST_P(DefaultExecutorTest, TaskRunning)
   v1::TaskGroupInfo taskGroup;
   taskGroup.add_tasks()->CopyFrom(taskInfo);
 
-  Future<v1::scheduler::Event::Update> update;
+  Future<v1::scheduler::Event::Update> startingUpdate;
+  Future<v1::scheduler::Event::Update> runningUpdate;
   EXPECT_CALL(*scheduler, update(_, _))
-    .WillOnce(FutureArg<1>(&update));
+    .WillOnce(FutureArg<1>(&startingUpdate))
+    .WillOnce(FutureArg<1>(&runningUpdate));
 
   {
     Call call;
@@ -216,11 +238,30 @@ TEST_P(DefaultExecutorTest, TaskRunning)
     mesos.send(call);
   }
 
-  AWAIT_READY(update);
+  AWAIT_READY(startingUpdate);
+  ASSERT_EQ(TASK_STARTING, startingUpdate->status().state());
 
-  ASSERT_EQ(TASK_RUNNING, update->status().state());
-  EXPECT_EQ(taskInfo.task_id(), update->status().task_id());
-  EXPECT_TRUE(update->status().has_timestamp());
+  {
+    Call call;
+    call.mutable_framework_id()->CopyFrom(frameworkId);
+    call.set_type(Call::ACKNOWLEDGE);
+
+    Call::Acknowledge* acknowledge = call.mutable_acknowledge();
+
+    acknowledge->mutable_task_id()->CopyFrom(
+        startingUpdate->status().task_id());
+
+    acknowledge->mutable_agent_id()->CopyFrom(offer.agent_id());
+    acknowledge->set_uuid(startingUpdate->status().uuid());
+
+    mesos.send(call);
+  }
+
+  AWAIT_READY(runningUpdate);
+
+  ASSERT_EQ(TASK_RUNNING, runningUpdate->status().state());
+  EXPECT_EQ(taskInfo.task_id(), runningUpdate->status().task_id());
+  EXPECT_TRUE(runningUpdate->status().has_timestamp());
 
   // Ensure that the task sandbox symbolic link is created.
   EXPECT_TRUE(os::exists(path::join(
@@ -319,6 +360,10 @@ TEST_P(DefaultExecutorTest, KillTask)
   const v1::Offer& offer1 = offers1->offers(0);
   const v1::AgentID& agentId = offer1.agent_id();
 
+  auto acknowledge = [&] (const Future<v1::scheduler::Event::Update>& update) {
+    defaultExecutorAcknowledge(mesos, frameworkId, agentId, update->status());
+  };
+
   v1::TaskInfo taskInfo1 =
     v1::createTask(agentId, resources, SLEEP_COMMAND(1000));
 
@@ -331,9 +376,13 @@ TEST_P(DefaultExecutorTest, KillTask)
 
   const hashset<v1::TaskID> tasks1{taskInfo1.task_id(), taskInfo2.task_id()};
 
+  Future<v1::scheduler::Event::Update> startingUpdate1;
+  Future<v1::scheduler::Event::Update> startingUpdate2;
   Future<v1::scheduler::Event::Update> runningUpdate1;
   Future<v1::scheduler::Event::Update> runningUpdate2;
   EXPECT_CALL(*scheduler, update(_, _))
+    .WillOnce(FutureArg<1>(&startingUpdate1))
+    .WillOnce(FutureArg<1>(&startingUpdate2))
     .WillOnce(FutureArg<1>(&runningUpdate1))
     .WillOnce(FutureArg<1>(&runningUpdate2));
 
@@ -366,6 +415,15 @@ TEST_P(DefaultExecutorTest, KillTask)
     mesos.send(call);
   }
 
+  AWAIT_READY(startingUpdate1);
+  ASSERT_EQ(TASK_STARTING, startingUpdate1->status().state());
+
+  AWAIT_READY(startingUpdate2);
+  ASSERT_EQ(TASK_STARTING, startingUpdate2->status().state());
+
+  acknowledge(startingUpdate1);
+  acknowledge(startingUpdate2);
+
   AWAIT_READY(runningUpdate1);
   ASSERT_EQ(TASK_RUNNING, runningUpdate1->status().state());
 
@@ -389,8 +447,10 @@ TEST_P(DefaultExecutorTest, KillTask)
   v1::TaskGroupInfo taskGroup2;
   taskGroup2.add_tasks()->CopyFrom(taskInfo3);
 
+  Future<v1::scheduler::Event::Update> startingUpdate3;
   Future<v1::scheduler::Event::Update> runningUpdate3;
   EXPECT_CALL(*scheduler, update(_, _))
+    .WillOnce(FutureArg<1>(&startingUpdate3))
     .WillOnce(FutureArg<1>(&runningUpdate3));
 
   // Launch the second task group.
@@ -414,59 +474,21 @@ TEST_P(DefaultExecutorTest, KillTask)
     mesos.send(call);
   }
 
+  AWAIT_READY(startingUpdate3);
+  ASSERT_EQ(TASK_STARTING, startingUpdate3->status().state());
+  ASSERT_EQ(taskInfo3.task_id(), startingUpdate3->status().task_id());
+
+  acknowledge(startingUpdate3);
+
   AWAIT_READY(runningUpdate3);
   ASSERT_EQ(TASK_RUNNING, runningUpdate3->status().state());
   ASSERT_EQ(taskInfo3.task_id(), runningUpdate3->status().task_id());
 
   // Acknowledge the TASK_RUNNING updates to receive the next updates.
 
-  {
-    Call call;
-    call.mutable_framework_id()->CopyFrom(frameworkId);
-    call.set_type(Call::ACKNOWLEDGE);
-
-    Call::Acknowledge* acknowledge = call.mutable_acknowledge();
-
-    acknowledge->mutable_task_id()->CopyFrom(
-        runningUpdate1->status().task_id());
-
-    acknowledge->mutable_agent_id()->CopyFrom(offer1.agent_id());
-    acknowledge->set_uuid(runningUpdate1->status().uuid());
-
-    mesos.send(call);
-  }
-
-  {
-    Call call;
-    call.mutable_framework_id()->CopyFrom(frameworkId);
-    call.set_type(Call::ACKNOWLEDGE);
-
-    Call::Acknowledge* acknowledge = call.mutable_acknowledge();
-
-    acknowledge->mutable_task_id()->CopyFrom(
-        runningUpdate2->status().task_id());
-
-    acknowledge->mutable_agent_id()->CopyFrom(offer1.agent_id());
-    acknowledge->set_uuid(runningUpdate2->status().uuid());
-
-    mesos.send(call);
-  }
-
-  {
-    Call call;
-    call.mutable_framework_id()->CopyFrom(frameworkId);
-    call.set_type(Call::ACKNOWLEDGE);
-
-    Call::Acknowledge* acknowledge = call.mutable_acknowledge();
-
-    acknowledge->mutable_task_id()->CopyFrom(
-        runningUpdate3->status().task_id());
-
-    acknowledge->mutable_agent_id()->CopyFrom(offer2.agent_id());
-    acknowledge->set_uuid(runningUpdate3->status().uuid());
-
-    mesos.send(call);
-  }
+  acknowledge(runningUpdate1);
+  acknowledge(runningUpdate2);
+  acknowledge(runningUpdate3);
 
   Future<v1::scheduler::Event::Update> killedUpdate1;
   Future<v1::scheduler::Event::Update> killedUpdate2;
@@ -606,6 +628,10 @@ TEST_P(DefaultExecutorTest, KillTaskGroupOnTaskFailure)
   const v1::Offer& offer = offers->offers(0);
   const v1::AgentID& agentId = offer.agent_id();
 
+  auto acknowledge = [&] (const Future<v1::scheduler::Event::Update>& update) {
+    defaultExecutorAcknowledge(mesos, frameworkId, agentId, update->status());
+  };
+
   // The first task exits with a non-zero status code.
   v1::TaskInfo taskInfo1 = v1::createTask(agentId, resources, "exit 1");
 
@@ -618,9 +644,13 @@ TEST_P(DefaultExecutorTest, KillTaskGroupOnTaskFailure)
   taskGroup.add_tasks()->CopyFrom(taskInfo1);
   taskGroup.add_tasks()->CopyFrom(taskInfo2);
 
+  Future<v1::scheduler::Event::Update> startingUpdate1;
+  Future<v1::scheduler::Event::Update> startingUpdate2;
   Future<v1::scheduler::Event::Update> runningUpdate1;
   Future<v1::scheduler::Event::Update> runningUpdate2;
   EXPECT_CALL(*scheduler, update(_, _))
+    .WillOnce(FutureArg<1>(&startingUpdate1))
+    .WillOnce(FutureArg<1>(&startingUpdate2))
     .WillOnce(FutureArg<1>(&runningUpdate1))
     .WillOnce(FutureArg<1>(&runningUpdate2));
 
@@ -644,6 +674,15 @@ TEST_P(DefaultExecutorTest, KillTaskGroupOnTaskFailure)
     mesos.send(call);
   }
 
+  AWAIT_READY(startingUpdate1);
+  ASSERT_EQ(TASK_STARTING, startingUpdate1->status().state());
+
+  AWAIT_READY(startingUpdate2);
+  ASSERT_EQ(TASK_STARTING, startingUpdate2->status().state());
+
+  acknowledge(startingUpdate1);
+  acknowledge(startingUpdate2);
+
   AWAIT_READY(runningUpdate1);
   ASSERT_EQ(TASK_RUNNING, runningUpdate1->status().state());
 
@@ -665,38 +704,8 @@ TEST_P(DefaultExecutorTest, KillTaskGroupOnTaskFailure)
     .WillOnce(FutureArg<1>(&update2));
 
   // Acknowledge the TASK_RUNNING updates to receive the next updates.
-
-  {
-    Call call;
-    call.mutable_framework_id()->CopyFrom(frameworkId);
-    call.set_type(Call::ACKNOWLEDGE);
-
-    Call::Acknowledge* acknowledge = call.mutable_acknowledge();
-
-    acknowledge->mutable_task_id()->CopyFrom(
-        runningUpdate1->status().task_id());
-
-    acknowledge->mutable_agent_id()->CopyFrom(offer.agent_id());
-    acknowledge->set_uuid(runningUpdate1->status().uuid());
-
-    mesos.send(call);
-  }
-
-  {
-    Call call;
-    call.mutable_framework_id()->CopyFrom(frameworkId);
-    call.set_type(Call::ACKNOWLEDGE);
-
-    Call::Acknowledge* acknowledge = call.mutable_acknowledge();
-
-    acknowledge->mutable_task_id()->CopyFrom(
-        runningUpdate2->status().task_id());
-
-    acknowledge->mutable_agent_id()->CopyFrom(offer.agent_id());
-    acknowledge->set_uuid(runningUpdate2->status().uuid());
-
-    mesos.send(call);
-  }
+  acknowledge(runningUpdate1);
+  acknowledge(runningUpdate2);
 
   // Updates for the tasks in a task group can be received in any order.
   set<pair<v1::TaskID, v1::TaskState>> taskStates;
@@ -793,9 +802,11 @@ TEST_P(DefaultExecutorTest, TaskUsesExecutor)
   v1::TaskGroupInfo taskGroup;
   taskGroup.add_tasks()->CopyFrom(taskInfo);
 
-  Future<v1::scheduler::Event::Update> update;
+  Future<v1::scheduler::Event::Update> startingUpdate;
+  Future<v1::scheduler::Event::Update> runningUpdate;
   EXPECT_CALL(*scheduler, update(_, _))
-    .WillOnce(FutureArg<1>(&update));
+    .WillOnce(FutureArg<1>(&startingUpdate))
+    .WillOnce(FutureArg<1>(&runningUpdate));
 
   {
     Call call;
@@ -817,11 +828,20 @@ TEST_P(DefaultExecutorTest, TaskUsesExecutor)
     mesos.send(call);
   }
 
-  AWAIT_READY(update);
+  AWAIT_READY(startingUpdate);
 
-  ASSERT_EQ(TASK_RUNNING, update->status().state());
-  EXPECT_EQ(taskInfo.task_id(), update->status().task_id());
-  EXPECT_TRUE(update->status().has_timestamp());
+  ASSERT_EQ(TASK_STARTING, startingUpdate->status().state());
+  EXPECT_EQ(taskInfo.task_id(), startingUpdate->status().task_id());
+  EXPECT_TRUE(startingUpdate->status().has_timestamp());
+
+  defaultExecutorAcknowledge(
+    mesos, frameworkId, agentId, startingUpdate->status());
+
+  AWAIT_READY(runningUpdate);
+
+  ASSERT_EQ(TASK_RUNNING, runningUpdate->status().state());
+  EXPECT_EQ(taskInfo.task_id(), runningUpdate->status().task_id());
+  EXPECT_TRUE(runningUpdate->status().has_timestamp());
 }
 
 
@@ -1008,9 +1028,11 @@ TEST_P(DefaultExecutorTest, CommitSuicideOnTaskFailure)
   v1::TaskGroupInfo taskGroup;
   taskGroup.add_tasks()->CopyFrom(taskInfo1);
 
+  Future<v1::scheduler::Event::Update> startingUpdate;
   Future<v1::scheduler::Event::Update> runningUpdate;
   Future<v1::scheduler::Event::Update> failedUpdate;
   EXPECT_CALL(*scheduler, update(_, _))
+    .WillOnce(FutureArg<1>(&startingUpdate))
     .WillOnce(FutureArg<1>(&runningUpdate))
     .WillOnce(FutureArg<1>(&failedUpdate));
 
@@ -1038,26 +1060,17 @@ TEST_P(DefaultExecutorTest, CommitSuicideOnTaskFailure)
     mesos.send(call);
   }
 
+  AWAIT_READY(startingUpdate);
+  ASSERT_EQ(TASK_STARTING, startingUpdate->status().state());
+
+  defaultExecutorAcknowledge(
+    mesos, frameworkId, agentId, startingUpdate->status());
+
   AWAIT_READY(runningUpdate);
   ASSERT_EQ(TASK_RUNNING, runningUpdate->status().state());
 
-  // Acknowledge the TASK_RUNNING update to receive the next update.
-
-  {
-    Call call;
-    call.mutable_framework_id()->CopyFrom(frameworkId);
-    call.set_type(Call::ACKNOWLEDGE);
-
-    Call::Acknowledge* acknowledge = call.mutable_acknowledge();
-
-    acknowledge->mutable_task_id()->CopyFrom(
-        runningUpdate->status().task_id());
-
-    acknowledge->mutable_agent_id()->CopyFrom(offer.agent_id());
-    acknowledge->set_uuid(runningUpdate->status().uuid());
-
-    mesos.send(call);
-  }
+  defaultExecutorAcknowledge(
+    mesos, frameworkId, agentId, runningUpdate->status());
 
   AWAIT_READY(failedUpdate);
   ASSERT_EQ(TASK_FAILED, failedUpdate->status().state());
@@ -1138,6 +1151,10 @@ TEST_P(DefaultExecutorTest, CommitSuicideOnKillTask)
   const v1::Offer& offer = offers->offers(0);
   const v1::AgentID& agentId = offer.agent_id();
 
+  auto acknowledge = [&] (const Future<v1::scheduler::Event::Update>& update) {
+    defaultExecutorAcknowledge(mesos, frameworkId, agentId, update->status());
+  };
+
   // The first task finishes successfully while the second
   // task is explicitly killed later.
 
@@ -1152,9 +1169,13 @@ TEST_P(DefaultExecutorTest, CommitSuicideOnKillTask)
 
   const hashset<v1::TaskID> tasks{taskInfo1.task_id(), taskInfo2.task_id()};
 
+  Future<v1::scheduler::Event::Update> startingUpdate1;
+  Future<v1::scheduler::Event::Update> startingUpdate2;
   Future<v1::scheduler::Event::Update> runningUpdate1;
   Future<v1::scheduler::Event::Update> runningUpdate2;
   EXPECT_CALL(*scheduler, update(_, _))
+    .WillOnce(FutureArg<1>(&startingUpdate1))
+    .WillOnce(FutureArg<1>(&startingUpdate2))
     .WillOnce(FutureArg<1>(&runningUpdate1))
     .WillOnce(FutureArg<1>(&runningUpdate2));
 
@@ -1182,6 +1203,15 @@ TEST_P(DefaultExecutorTest, CommitSuicideOnKillTask)
     mesos.send(call);
   }
 
+  AWAIT_READY(startingUpdate1);
+  ASSERT_EQ(TASK_STARTING, startingUpdate1->status().state());
+
+  AWAIT_READY(startingUpdate2);
+  ASSERT_EQ(TASK_STARTING, startingUpdate2->status().state());
+
+  acknowledge(startingUpdate1);
+  acknowledge(startingUpdate2);
+
   AWAIT_READY(runningUpdate1);
   ASSERT_EQ(TASK_RUNNING, runningUpdate1->status().state());
 
@@ -1202,37 +1232,8 @@ TEST_P(DefaultExecutorTest, CommitSuicideOnKillTask)
 
   // Acknowledge the TASK_RUNNING updates to receive the next updates.
 
-  {
-    Call call;
-    call.mutable_framework_id()->CopyFrom(frameworkId);
-    call.set_type(Call::ACKNOWLEDGE);
-
-    Call::Acknowledge* acknowledge = call.mutable_acknowledge();
-
-    acknowledge->mutable_task_id()->CopyFrom(
-        runningUpdate1->status().task_id());
-
-    acknowledge->mutable_agent_id()->CopyFrom(offer.agent_id());
-    acknowledge->set_uuid(runningUpdate1->status().uuid());
-
-    mesos.send(call);
-  }
-
-  {
-    Call call;
-    call.mutable_framework_id()->CopyFrom(frameworkId);
-    call.set_type(Call::ACKNOWLEDGE);
-
-    Call::Acknowledge* acknowledge = call.mutable_acknowledge();
-
-    acknowledge->mutable_task_id()->CopyFrom(
-        runningUpdate2->status().task_id());
-
-    acknowledge->mutable_agent_id()->CopyFrom(offer.agent_id());
-    acknowledge->set_uuid(runningUpdate2->status().uuid());
-
-    mesos.send(call);
-  }
+  acknowledge(runningUpdate1);
+  acknowledge(runningUpdate2);
 
   AWAIT_READY(finishedUpdate);
   ASSERT_EQ(TASK_FINISHED, finishedUpdate->status().state());
@@ -1350,8 +1351,10 @@ TEST_P(DefaultExecutorTest, ReservedResources)
   v1::TaskGroupInfo taskGroup;
   taskGroup.add_tasks()->CopyFrom(taskInfo);
 
+  Future<v1::scheduler::Event::Update> startingUpdate;
   Future<v1::scheduler::Event::Update> runningUpdate;
   EXPECT_CALL(*scheduler, update(_, _))
+    .WillOnce(FutureArg<1>(&startingUpdate))
     .WillOnce(FutureArg<1>(&runningUpdate));
 
   {
@@ -1375,6 +1378,13 @@ TEST_P(DefaultExecutorTest, ReservedResources)
 
     mesos.send(call);
   }
+
+  AWAIT_READY(startingUpdate);
+  ASSERT_EQ(TASK_STARTING, startingUpdate->status().state());
+  ASSERT_EQ(taskInfo.task_id(), startingUpdate->status().task_id());
+
+  defaultExecutorAcknowledge(
+    mesos, frameworkId, agentId, startingUpdate->status());
 
   AWAIT_READY(runningUpdate);
   ASSERT_EQ(TASK_RUNNING, runningUpdate->status().state());
@@ -1433,7 +1443,8 @@ TEST_P(DefaultExecutorTest, SigkillExecutor)
 
   Future<v1::scheduler::Event::Offers> offers;
   EXPECT_CALL(*scheduler, offers(_, _))
-    .WillOnce(FutureArg<1>(&offers));
+    .WillOnce(FutureArg<1>(&offers))
+    .WillRepeatedly(Return());
 
   EXPECT_CALL(*scheduler, heartbeat(_))
     .WillRepeatedly(Return()); // Ignore heartbeats.
@@ -1461,9 +1472,11 @@ TEST_P(DefaultExecutorTest, SigkillExecutor)
       v1::Resources::parse("cpus:0.1;mem:32;disk:32").get(),
       "sleep 1000");
 
-  Future<v1::scheduler::Event::Update> update;
+  Future<v1::scheduler::Event::Update> startingUpdate;
+  Future<v1::scheduler::Event::Update> runningUpdate;
   EXPECT_CALL(*scheduler, update(_, _))
-    .WillOnce(FutureArg<1>(&update));
+    .WillOnce(FutureArg<1>(&startingUpdate))
+    .WillOnce(FutureArg<1>(&runningUpdate));
 
   v1::Offer::Operation launchGroup = v1::LAUNCH_GROUP(
       executorInfo,
@@ -1471,14 +1484,36 @@ TEST_P(DefaultExecutorTest, SigkillExecutor)
 
   mesos.send(v1::createCallAccept(frameworkId, offer, {launchGroup}));
 
-  AWAIT_READY(update);
+  AWAIT_READY(startingUpdate);
 
-  ASSERT_EQ(TASK_RUNNING, update->status().state());
-  EXPECT_EQ(taskInfo.task_id(), update->status().task_id());
-  EXPECT_TRUE(update->status().has_timestamp());
-  ASSERT_TRUE(update->status().has_container_status());
+  ASSERT_EQ(TASK_STARTING, startingUpdate->status().state());
+  EXPECT_EQ(taskInfo.task_id(), startingUpdate->status().task_id());
+  EXPECT_TRUE(startingUpdate->status().has_timestamp());
 
-  v1::ContainerStatus status = update->status().container_status();
+  {
+    Call call;
+    call.mutable_framework_id()->CopyFrom(frameworkId);
+    call.set_type(Call::ACKNOWLEDGE);
+
+    Call::Acknowledge* acknowledge = call.mutable_acknowledge();
+
+    acknowledge->mutable_task_id()->CopyFrom(
+        startingUpdate->status().task_id());
+
+    acknowledge->mutable_agent_id()->CopyFrom(offer.agent_id());
+    acknowledge->set_uuid(startingUpdate->status().uuid());
+
+    mesos.send(call);
+  }
+
+  AWAIT_READY(runningUpdate);
+
+  ASSERT_EQ(TASK_RUNNING, runningUpdate->status().state());
+  EXPECT_EQ(taskInfo.task_id(), runningUpdate->status().task_id());
+  EXPECT_TRUE(runningUpdate->status().has_timestamp());
+  ASSERT_TRUE(runningUpdate->status().has_container_status());
+
+  v1::ContainerStatus status = runningUpdate->status().container_status();
 
   ASSERT_TRUE(status.has_container_id());
   EXPECT_TRUE(status.container_id().has_parent());

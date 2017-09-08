@@ -8321,10 +8321,11 @@ TEST_P(MasterTestPrePostReservationRefinement, LaunchGroup)
   v1::TaskGroupInfo taskGroup;
   taskGroup.add_tasks()->CopyFrom(taskInfo);
 
-  Future<v1::scheduler::Event::Update> update;
+  Future<v1::scheduler::Event::Update> startingUpdate;
+  Future<v1::scheduler::Event::Update> runningUpdate;
   EXPECT_CALL(*scheduler, update(_, _))
-    .WillOnce(FutureArg<1>(&update))
-    .WillRepeatedly(Return());  // Ignore subsequent TASK_RUNNING updates
+    .WillOnce(FutureArg<1>(&startingUpdate))
+    .WillOnce(FutureArg<1>(&runningUpdate));
 
   {
     Call call;
@@ -8346,11 +8347,17 @@ TEST_P(MasterTestPrePostReservationRefinement, LaunchGroup)
     mesos.send(call);
   }
 
-  AWAIT_READY(update);
+  AWAIT_READY(startingUpdate);
 
-  EXPECT_EQ(TASK_STARTING, update->status().state());
-  EXPECT_EQ(taskInfo.task_id(), update->status().task_id());
-  EXPECT_TRUE(update->status().has_timestamp());
+  EXPECT_EQ(TASK_STARTING, startingUpdate->status().state());
+  EXPECT_EQ(taskInfo.task_id(), startingUpdate->status().task_id());
+  EXPECT_TRUE(startingUpdate->status().has_timestamp());
+
+  AWAIT_READY(runningUpdate);
+
+  EXPECT_EQ(TASK_STARTING, runningUpdate->status().state());
+  EXPECT_EQ(taskInfo.task_id(), runningUpdate->status().task_id());
+  EXPECT_TRUE(runningUpdate->status().has_timestamp());
 
   // Ensure that the task sandbox symbolic link is created.
   EXPECT_TRUE(os::exists(path::join(

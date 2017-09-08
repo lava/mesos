@@ -2384,10 +2384,12 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(
   AWAIT_READY(offers);
   EXPECT_FALSE(offers->empty());
 
+  Future<TaskStatus> statusStarting;
   Future<TaskStatus> statusRunning;
   Future<TaskStatus> statusHealthy;
 
   EXPECT_CALL(sched, statusUpdate(&driver, _))
+    .WillOnce(FutureArg<1>(&statusStarting))
     .WillOnce(FutureArg<1>(&statusRunning))
     .WillOnce(FutureArg<1>(&statusHealthy));
 
@@ -2425,6 +2427,9 @@ TEST_F_TEMP_DISABLED_ON_WINDOWS(
 
   driver.acceptOffers(
       {offers->front().id()}, {LAUNCH_GROUP(executor, taskGroup)});
+
+  AWAIT_READY(statusRunning);
+  EXPECT_EQ(TASK_STARTING, statusStarting.get().state());
 
   AWAIT_READY(statusRunning);
   EXPECT_EQ(TASK_RUNNING, statusRunning.get().state());

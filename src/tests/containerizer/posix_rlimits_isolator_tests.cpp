@@ -488,14 +488,15 @@ TEST_F(PosixRLimitsIsolatorTest, NestedContainers)
   // that they transition from TASK_RUNNING to TASK_FINISHED.
   enum class Stage
   {
+    STARTING,
     INITIAL,
     RUNNING,
     FINISHED
   };
 
   hashmap<TaskID, Stage> taskStages;
-  taskStages[task1.task_id()] = Stage::INITIAL;
-  taskStages[task2.task_id()] = Stage::INITIAL;
+  taskStages[task1.task_id()] = Stage::STARTING;
+  taskStages[task2.task_id()] = Stage::STARTING;
 
   foreach (const Future<TaskStatus>& taskStatus, taskStatuses) {
     AWAIT_READY(taskStatus);
@@ -504,6 +505,13 @@ TEST_F(PosixRLimitsIsolatorTest, NestedContainers)
     ASSERT_SOME(taskStage);
 
     switch (taskStage.get()) {
+      case Stage::STARTING: {
+        ASSERT_EQ(TASK_STARTING, taskStatus->state())
+          << taskStatus->DebugString();
+
+        taskStages[taskStatus->task_id()] = Stage::INITIAL;
+        break;
+      }
       case Stage::INITIAL: {
         ASSERT_EQ(TASK_RUNNING, taskStatus->state())
           << taskStatus->DebugString();

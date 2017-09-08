@@ -373,10 +373,16 @@ protected:
     CHECK_EQ(SUBSCRIBED, state);
     CHECK_SOME(executorContainerId);
 
+    VLOG(1) << "Attempting to send starting update";
+
     foreach (const TaskInfo& task, taskGroup.tasks()) {
-      const TaskStatus status = createTaskStatus(task.task_id(), TASK_STARTING);
-      forward(status);
+      const TaskStatus status = createTaskStatus(
+        task.task_id(), TASK_STARTING, None(), None(), false);
+      forward(status, false);
     }
+
+    VLOG(1) << "Successfully sent starting update";
+
 
     // Determine the container IP in order to set `MESOS_CONTAINER_IP`
     // environment variable for each of the tasks being launched.
@@ -1246,7 +1252,8 @@ private:
       const TaskID& taskId,
       const TaskState& state,
       const Option<TaskStatus::Reason>& reason = None(),
-      const Option<string>& message = None())
+      const Option<string>& message = None(),
+      bool containerExists = true)
   {
     TaskStatus status = protobuf::createTaskStatus(
         taskId,
@@ -1263,6 +1270,10 @@ private:
 
     if (message.isSome()) {
       status.set_message(message.get());
+    }
+
+    if (!containerExists) {
+      return status;
     }
 
     CHECK(containers.contains(taskId));
@@ -1306,7 +1317,7 @@ private:
     return status;
   }
 
-  void forward(const TaskStatus& status)
+  void forward(const TaskStatus& status, bool updateContainerStatus = true)
   {
     Call call;
     call.set_type(Call::UPDATE);
@@ -1319,9 +1330,11 @@ private:
     // Capture the status update.
     unacknowledgedUpdates[UUID::fromBytes(status.uuid()).get()] = call.update();
 
-    // Overwrite the last task status.
-    CHECK(containers.contains(status.task_id()));
-    containers.at(status.task_id())->lastTaskStatus = status;
+    if (updateContainerStatus) {
+      // Overwrite the last task status.
+      CHECK(containers.contains(status.task_id()));
+      containers.at(status.task_id())->lastTaskStatus = status;
+    }
 
     mesos->send(evolve(call));
   }
