@@ -531,6 +531,35 @@ FrameworkMetrics::FrameworkMetrics(
         getPrefix(frameworkInfo) + "offers/declined"),
     offers_rescinded(
         getPrefix(frameworkInfo) + "offers/rescinded"),
+    offers_with_resource_types(
+        {{"cpus",
+          Counter(getPrefix(frameworkInfo) +
+              "offers/sent/with_cpus")},
+         {"mem",
+          Counter(getPrefix(frameworkInfo) +
+              "offers/sent/with_mem")},
+         {"disk",
+          Counter(getPrefix(frameworkInfo) +
+              "offers/sent/with_disk")},
+         {"ports",
+          Counter(getPrefix(frameworkInfo) +
+              "offers/sent/with_ports")},
+         {"gpus",
+          Counter(getPrefix(frameworkInfo) +
+              "offers/sent/with_gpus")}}),
+    offered_resource_types(
+        {{"cpus",
+          Counter(getPrefix(frameworkInfo) +
+              "offered_resources/cpus")},
+         {"mem",
+          Counter(getPrefix(frameworkInfo) +
+              "offered_resources/mem")},
+         {"disk",
+          Counter(getPrefix(frameworkInfo) +
+              "offered_resources/disk")},
+         {"gpus",
+          Counter(getPrefix(frameworkInfo) +
+              "offered_resources/gpus")}}),
     operations(
         getPrefix(frameworkInfo) + "operations"),
     refuse_seconds_infinite(
@@ -561,6 +590,14 @@ FrameworkMetrics::FrameworkMetrics(
   process::metrics::add(offers_declined);
   process::metrics::add(offers_rescinded);
 
+  foreachvalue (const Counter& counter, offers_with_resource_types) {
+    process::metrics::add(counter);
+  }
+
+  foreachvalue (const Counter& counter, offered_resource_types) {
+    process::metrics::add(counter);
+  }
+
   process::metrics::add(refuse_seconds_infinite);
 
   foreachvalue (const Counter& counter, refuseSecondsBuckets) {
@@ -587,6 +624,14 @@ FrameworkMetrics::~FrameworkMetrics()
   process::metrics::remove(offers_accepted);
   process::metrics::remove(offers_declined);
   process::metrics::remove(offers_rescinded);
+
+  foreachvalue (const Counter& counter, offers_with_resource_types) {
+    process::metrics::remove(counter);
+  }
+
+  foreachvalue (const Counter& counter, offered_resource_types) {
+    process::metrics::remove(counter);
+  }
 
   foreachvalue (const auto& source_reason, terminal_task_reasons) {
     foreachvalue (const auto& reason_counter, source_reason) {
@@ -796,6 +841,45 @@ void FrameworkMetrics::incrementOfferFilterBuckets(const Duration _duration)
       refuseSecondsBuckets) {
     if (_duration <= duration) {
       counter++;
+    }
+  }
+}
+
+
+void FrameworkMetrics::incrementOffersWithResourceTypes(
+    const Resources& resources)
+{
+  foreach (const Resource& resource, resources) {
+    if (!Resources::isEmpty(resource)) {
+      if (!offers_with_resource_types.contains(resource.name())) {
+        Counter counter(
+            getPrefix(frameworkInfo) +
+            "offers/sent/with_" + resource.name());
+        offers_with_resource_types.put(resource.name(), counter);
+        process::metrics::add(counter);
+        counter++;
+      } else {
+        offers_with_resource_types.at(resource.name())++;
+      }
+    }
+  }
+}
+
+
+void FrameworkMetrics::incrementOfferedResourceTypes(const Resources& resources)
+{
+  foreach (const Resource& resource, resources) {
+    if (resource.type() == Value::SCALAR && !Resources::isEmpty(resource)) {
+      if (!offered_resource_types.contains(resource.name())) {
+        Counter counter(
+            getPrefix(frameworkInfo) +
+            "offered_resources/" + resource.name());
+        offered_resource_types.put(resource.name(), counter);
+        process::metrics::add(counter);
+        counter += resource.scalar().value();
+      } else {
+        offered_resource_types.at(resource.name()) += resource.scalar().value();
+      }
     }
   }
 }
