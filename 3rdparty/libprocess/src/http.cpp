@@ -92,6 +92,9 @@ struct StatusDescription {
 };
 
 
+std::atomic<uint64_t> Request::counter;
+
+
 // Status code reason strings, from the HTTP1.1 RFC:
 // http://www.w3.org/Protocols/rfc2616/rfc2616-sec6.html
 StatusDescription statuses[] = {
