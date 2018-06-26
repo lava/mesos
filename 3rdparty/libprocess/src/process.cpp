@@ -3384,26 +3384,52 @@ void ProcessManager::settle()
 
 Future<Response> ProcessManager::__processes__(const Request&)
 {
-  synchronized (processes_mutex) {
-    return collect(lambda::map(
-        [](ProcessBase* process) {
-          // TODO(benh): Try and "inject" this dispatch or create a
-          // high-priority set of events (i.e., mailbox).
-          return dispatch(
-              process->self(),
-              [process]() -> JSON::Object {
-                return *process;
-              });
-        },
-        process_manager->processes.values()))
-      .then([](const std::vector<JSON::Object>& objects) -> Response {
-        JSON::Array array;
-        foreach (const JSON::Object& object, objects) {
-          array.values.push_back(object);
-        }
-        return OK(array);
-      });
+  // synchronized (processes_mutex) {
+  //   return collect(lambda::map(
+  //       [](ProcessBase* process) {
+  //         // TODO(benh): Try and "inject" this dispatch or create a
+  //         // high-priority set of events (i.e., mailbox).
+  //         return dispatch(
+  //             process->self(),
+  //             [process]() -> JSON::Object {
+  //               return *process;
+  //             });
+  //       },
+  //       process_manager->processes.values()))
+  //     .then([](const std::vector<JSON::Object>& objects) -> Response {
+  //       JSON::Array array;
+  //       foreach (const JSON::Object& object, objects) {
+  //         array.values.push_back(object);
+  //       }
+  //       return OK(array);
+  //     });
+  // }
+
+  std::vector<ProcessReference> pids;
+  synchronized(processes_mutex) {
+    foreach(ProcessBase* process, process_manager->processes.values()) {
+      pids.push_back(process_manager->use(process->pid));
+    }
   }
+
+  return collect(lambda::map(
+      [](ProcessBase* process) {
+        // TODO(benh): Try and "inject" this dispatch or create a
+        // high-priority set of events (i.e., mailbox).
+        return dispatch(
+            process->self(),
+            [process]() -> JSON::Object {
+              return *process;
+            });
+      },
+      process_manager->processes.values()))
+    .then([](const std::vector<JSON::Object>& objects) -> Response {
+      JSON::Array array;
+      foreach (const JSON::Object& object, objects) {
+        array.values.push_back(object);
+      }
+      return OK(array);
+    });
 }
 
 
