@@ -2099,39 +2099,35 @@ Future<Response> Master::Http::getFlags(
 }
 
 
-class MasterHttpActor : public process::Process<MasterHttpActor>
+class StateActor : public process::Process<StateActor>
 {
 public:
-  MasterHttpActor(Master::Http& http)
-    : http_(http)
+  StateActor(Master::Http& http)
+    : ProcessBase("state-actor")
+    , http_(http)
   {}
 
 protected:
   virtual void initialize()
   {
-    route("/state-copy", None(), std::string("Help"),
-      &Master::Http::stateCopy);
-      //   [this](const process::http::Request& request,
-      //          const Option<Principal>& principal)
-      // {
-      //   return http_.stateCopy(request, principal);
-      // });
+    route("/state-copy",
+        None(),
+        std::string("No help. No hope. No future."),
+        &StateActor::stateCopy);
   }
 
-  // process::Future<process::http::Response> stateCopy(
-  //   const process::http::Request& request,
-  //   const Option<process::http::authentication::Principal>&
-  //       principal);
-
 public:
+  process::Future<process::http::Response> stateCopy(
+    const process::http::Request& request,
+    const Option<process::http::authentication::Principal>&
+        principal);
+
   process::Future<process::http::Response> _stateCopy(
     const process::http::Request& request,
     const Option<process::http::authentication::Principal>&
         principal,
-    const process::Owned<ObjectApprovers>& approvers,
     MasterStateCopy* copy);
 
-private:
   Master::Http& http_;
 };
 
@@ -2141,14 +2137,14 @@ Master::Http::Http(Master* _master)
     quotaHandler(_master),
     weightsHandler(_master)
 {
-  httpActor = new MasterHttpActor(*this);
-  spawn(*httpActor);
+  httpActor = new StateActor(*this);
+  process::spawn(*httpActor);
 }
 
 Master::Http::~Http()
 {
-  wait(*httpActor);
-  terminate(*httpActor);
+  process::wait(*httpActor);
+  process::terminate(*httpActor);
 }
 
 
@@ -2868,8 +2864,6 @@ Future<Response> Master::Http::state(
     const Request& request,
     const Option<Principal>& principal) const
 {
-  ::clock_gettime(CLOCK_MONOTONIC, &request.processing);
-
   // TODO(greggomann): Remove this check once the `Principal` type is used in
   // `ReservationInfo`, `DiskInfo`, and within the master's `principals` map.
   // See MESOS-7202.
@@ -2891,6 +2885,11 @@ Future<Response> Master::Http::state(
     .then(defer(
         master->self(),
         [this, request](const Owned<ObjectApprovers>& approvers) -> Response {
+          // This is kinda assuming that the code above takes almost no time,
+          // if we end up with a huge discrepancy we should probably revisit
+          // that assumption and add a second measurement.
+          ::clock_gettime(CLOCK_MONOTONIC, &request.masterEntered);
+
           // This lambda is consumed before the outer lambda
           // returns, hence capture by reference is fine here.
           auto state = [this, &approvers](JSON::ObjectWriter* writer) {
@@ -3028,7 +3027,9 @@ Future<Response> Master::Http::state(
 
           auto ok = OK(jsonify(state), request.url.query.get("jsonp"));
 
+          ::clock_gettime(CLOCK_MONOTONIC, &request.masterExited);
           ::clock_gettime(CLOCK_MONOTONIC, &request.finished);
+
           benchmarking::state_json::logStateRequest(request, ok);
 
           return ok;
@@ -3037,22 +3038,75 @@ Future<Response> Master::Http::state(
 
 
 struct MasterStateCopy {
+  // Auxiliary data.
+  Owned<ObjectApprovers> approvers;
+  struct timespec masterEntered;
+  struct timespec masterExited;
+
+  // Actual state data.
   process::Time startTime;
   Option<process::Time> electedTime;
   MasterInfo info;
-  Option<MasterInfo> leader; // Current leading master.
+  Option<MasterInfo> leader;
   const Flags flags;
   Master::Slaves slaves;
   Master::Frameworks frameworks;
 };
 
 
-Future<Response> Master::Http::stateCopy(
+
+Future<MasterStateCopy*>
+Master::Http::stateCopy(
+  const Option<process::http::authentication::Principal>& principal)
+{
+  return dispatch(this->master->self(),
+                  [this, principal]() -> process::Future<MasterStateCopy*>
+  {
+    // todo - is it safe to access request by reference here?
+    struct timespec masterEntered;
+    ::clock_gettime(CLOCK_MONOTONIC, &masterEntered);
+
+    process::Future<process::Owned<ObjectApprovers>> approvers =
+      ObjectApprovers::create(
+          master->authorizer,
+          principal,
+          {VIEW_ROLE, VIEW_FRAMEWORK, VIEW_TASK, VIEW_EXECUTOR, VIEW_FLAGS});
+
+    MasterStateCopy* copy = new MasterStateCopy {
+      nullptr,
+      masterEntered,
+      masterEntered, // will be overwritten below
+      master->startTime,
+      master->electedTime,
+      master->info(),
+      master->leader,
+      master->flags,
+      master->slaves,
+      master->frameworks
+    };
+
+    // Technically we should probably add the time spent in the callbacks
+    // below (assuming they're executed in the context of the same actor?)
+    // However, the cost should be negligible.
+    ::clock_gettime(CLOCK_MONOTONIC, &copy->masterExited);
+
+    return approvers.onAny(
+        [copy](const process::Future<process::Owned<ObjectApprovers>>&
+            approvers) {
+          // todo - error checking
+          copy->approvers = approvers.get();
+      }).then(
+          // Using .then() to force the transformation from
+          // Future<ObjectApprovers> into Future<MasterStateCopy*>
+          [copy]{ return copy; }
+      );
+  });
+}
+
+Future<Response> StateActor::stateCopy(
     const Request& request,
     const Option<Principal>& principal)
 {
-  ::clock_gettime(CLOCK_MONOTONIC, &request.processing);
-
   // TODO(greggomann): Remove this check once the `Principal` type is used in
   // `ReservationInfo`, `DiskInfo`, and within the master's `principals` map.
   // See MESOS-7202.
@@ -3062,43 +3116,28 @@ Future<Response> Master::Http::stateCopy(
         "string. The master currently requires that principals have a value");
   }
 
+  // fixme - add replacement for this logic
   // When current master is not the leader, redirect to the leading master.
-  if (!master->elected()) {
-    return redirect(request);
-  }
+  // if (!master->elected()) {
+  //   return redirect(request);
+  // }
 
-  return ObjectApprovers::create(
-      master->authorizer,
-      principal,
-      {VIEW_ROLE, VIEW_FRAMEWORK, VIEW_TASK, VIEW_EXECUTOR, VIEW_FLAGS})
-    .then(defer(master->self(),
-      [this, &request, &principal] (const Owned<ObjectApprovers>& approvers) {
-        MasterStateCopy* copy = new MasterStateCopy {
-          master->startTime,
-          master->electedTime,
-          master->info(),
-          master->leader,
-          master->flags,
-          master->slaves,
-          master->frameworks
-        };
-
-        return defer(
-            httpActor,
-            &MasterHttpActor::_stateCopy,
-            request,
-            principal,
-            approvers,
-            copy);
-      }));
+  return http_.stateCopy(principal)
+    .then(defer(
+        self(),
+        &Self::_stateCopy,
+        request,
+        principal,
+        lambda::_1));
 }
 
-Future<Response> MasterHttpActor::_stateCopy(
+Future<Response> StateActor::_stateCopy(
     const Request& request,
     const Option<Principal>& principal,
-    const Owned<ObjectApprovers>& approvers,
     MasterStateCopy* copy)
 {
+  auto& approvers = copy->approvers;
+
   auto state = [this, &approvers, copy](JSON::ObjectWriter* writer) {
     writer->field("version", MESOS_VERSION);
 
@@ -3245,6 +3284,8 @@ Future<Response> MasterHttpActor::_stateCopy(
 
   auto ok = OK(jsonify(state), request.url.query.get("jsonp"));
   ::clock_gettime(CLOCK_MONOTONIC, &request.finished);
+  request.masterEntered = copy->masterEntered;
+  request.masterExited = copy->masterExited;
   benchmarking::state_json::logStateRequest(request, ok);
 
   delete copy;

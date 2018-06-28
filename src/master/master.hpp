@@ -422,6 +422,8 @@ private:
   const Option<Duration> delay;
 };
 
+struct MasterStateCopy;
+class StateActor;
 
 class Master : public ProtobufProcess<Master>
 {
@@ -1141,6 +1143,7 @@ private:
    */
   bool isWhitelistedRole(const std::string& name) const;
 
+public:
   /**
    * Inner class used to namespace the handling of quota requests.
    *
@@ -1339,9 +1342,8 @@ private:
   class Http
   {
   public:
-    explicit Http(Master* _master) : master(_master),
-                                     quotaHandler(_master),
-                                     weightsHandler(_master) {}
+    explicit Http(Master* _master);
+    ~Http();
 
     // /api/v1
     process::Future<process::http::Response> api(
@@ -1416,6 +1418,12 @@ private:
         const process::http::Request& request,
         const Option<process::http::authentication::Principal>&
             principal) const;
+
+    // /master/state-copy
+    process::Future<MasterStateCopy*> stateCopy(
+      // const process::http::Request& request,
+      const Option<process::http::authentication::Principal>&
+          principal);
 
     // /master/state-summary
     process::Future<process::http::Response> stateSummary(
@@ -1568,6 +1576,13 @@ private:
         const google::protobuf::RepeatedPtrField<Resource>& volumes,
         const Option<process::http::authentication::Principal>&
             principal) const;
+
+    // process::Future<process::http::Response> _stateCopy(
+    //     const process::http::Request& request,
+    //     const Option<process::http::authentication::Principal>&
+    //         principal,
+    //     const process::Owned<ObjectApprovers>& approvers,
+    //     MasterStateCopy* copy);
 
     /**
      * Continuation for operations: /reserve, /unreserve,
@@ -1772,8 +1787,11 @@ private:
         const scheduler::Call::ReconcileOperations& call,
         ContentType contentType) const;
 
+  public:
     Master* master;
+    StateActor* httpActor;
 
+  private:
     // NOTE: The quota specific pieces of the Operator API are factored
     // out into this separate class.
     QuotaHandler quotaHandler;
@@ -1783,6 +1801,7 @@ private:
     WeightsHandler weightsHandler;
   };
 
+private:
   Master(const Master&);              // No copying.
   Master& operator=(const Master&); // No assigning.
 
@@ -1840,9 +1859,25 @@ private:
   // should GC some information from the registry.
   Option<process::Timer> registryGcTimer;
 
+public:
   struct Slaves
   {
     Slaves() : removed(MAX_REMOVED_SLAVES) {}
+    Slaves(const Slaves& other)
+      : recoveredTimer(other.recoveredTimer)
+      , recovered(other.recovered)
+      , registering(other.registering)
+      , reregistering(other.reregistering)
+      , registered(other.registered)
+      , removing(other.removing)
+      , markingUnreachable(other.markingUnreachable)
+      , markingGone(other.markingGone)
+      , removed(MAX_REMOVED_SLAVES) // `Cache<K,V>` has no copy constructor
+      , unreachable(other.unreachable)
+      , unreachableTasks(other.unreachableTasks)
+      , gone(other.gone)
+      , limiter(other.limiter)
+    {}
 
     // Imposes a time limit for slaves that we recover from the
     // registry to reregister with the master.
@@ -1979,8 +2014,12 @@ private:
     // NOTE: Using a 'shared_ptr' here is OK because 'RateLimiter' is
     // a wrapper around libprocess process which is thread safe.
     Option<std::shared_ptr<process::RateLimiter>> limiter;
-  } slaves;
+  };
 
+private:
+  Slaves slaves;
+
+public:
   struct Frameworks
   {
     Frameworks(const Flags& masterFlags)
@@ -2009,7 +2048,10 @@ private:
     // The default limiter is for frameworks not specified in
     // 'flags.rate_limits'.
     Option<process::Owned<BoundedRateLimiter>> defaultLimiter;
-  } frameworks;
+  };
+
+private:
+  Frameworks frameworks;
 
   struct Subscribers
   {
