@@ -570,7 +570,10 @@ struct Request
 
   // Temporary benchmarking support.
   struct timespec received;
-  mutable struct timespec processing;
+
+  mutable struct timespec masterEntered;
+  mutable struct timespec masterExited;
+
   mutable struct timespec finished;
   uint64_t requestNumber;
 
