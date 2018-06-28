@@ -29,8 +29,8 @@ std::string decorate(const char* basename)
   pid_t pid = ::getpid();
 
   return std::string(basename) +
-    "-p" + std::to_string(pid) +
-    "-t" + std::to_string(now);
+    "-t" + std::to_string(now) +
+    "-p" + std::to_string(pid);
 }
 
 
@@ -73,8 +73,16 @@ private:
 };
 
 
-TimestampedFile& measurementFile() {
-  static TimestampedFile file("/tmp/state-json-benchmarking");
+// Measurements for the /state endpoint
+TimestampedFile& stateMeasurementsFile() {
+  static TimestampedFile file("/tmp/state-benchmarking-old");
+  return file;
+}
+
+
+// Measurements for the /state-copy endpoint
+TimestampedFile& stateCopyMeasurementsFile() {
+  static TimestampedFile file("/tmp/state-benchmarking-new");
   return file;
 }
 
@@ -88,12 +96,16 @@ namespace state_json {
 
 long long toMilliseconds(const struct timespec& ts)
 {
-  // microseconds:
-  // ts.tv_sec * 1000000ll + ts.tv_nsec / 1000ll;
-
   // TODO(bevers): We should probably adjust the origin
   // so it's measured in milliseconds since epoch.
   return ts.tv_sec * 1000ll + ts.tv_nsec / 1000000ll;
+}
+
+long long toMicroseconds(const struct timespec& ts)
+{
+  // TODO(bevers): We should probably adjust the origin
+  // so it's measured in milliseconds since epoch.
+  return ts.tv_sec * 1000000ll + ts.tv_nsec / 1000ll;
 }
 
 void logStateRequest(
@@ -102,14 +114,21 @@ void logStateRequest(
 {
   std::string line(128, '\0');
 
-  sprintf(&line[0], "request %lx (%lu bytes) - %lld %lld %lld\n",
+  sprintf(&line[0], "request %lx (%lu bytes) - %lld %lld %lld %lld\n",
       request.requestNumber,
       response.body.size(),
       toMilliseconds(request.received),
-      toMilliseconds(request.processing),
+      toMilliseconds(request.masterEntered),
+      toMilliseconds(request.masterExited),
       toMilliseconds(request.finished));
 
-  measurementFile().append(line.c_str());
+  if (strings::endsWith(request.url.path, "/state")) {
+    stateMeasurementsFile().append(line.c_str());
+  } else if (strings::endsWith(request.url.path, "/state-copy")) {
+    stateCopyMeasurementsFile().append(line.c_str());
+  } else {
+    LOG(WARNING) << "Skipping benchmark for unknown path " << request.url.path;
+  }
 }
 
 } // namespace state_json {

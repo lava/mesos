@@ -37,7 +37,6 @@ namespace internal {
 namespace benchmarking {
 namespace state_json {
 
-
 void logStateRequest(
     const process::http::Request& request,
     const process::http::Response& response);
