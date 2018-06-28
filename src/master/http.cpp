@@ -2099,6 +2099,59 @@ Future<Response> Master::Http::getFlags(
 }
 
 
+class MasterHttpActor : public process::Process<MasterHttpActor>
+{
+public:
+  MasterHttpActor(Master::Http& http)
+    : http_(http)
+  {}
+
+protected:
+  virtual void initialize()
+  {
+    route("/state-copy", None(), std::string("Help"),
+      &Master::Http::stateCopy);
+      //   [this](const process::http::Request& request,
+      //          const Option<Principal>& principal)
+      // {
+      //   return http_.stateCopy(request, principal);
+      // });
+  }
+
+  // process::Future<process::http::Response> stateCopy(
+  //   const process::http::Request& request,
+  //   const Option<process::http::authentication::Principal>&
+  //       principal);
+
+public:
+  process::Future<process::http::Response> _stateCopy(
+    const process::http::Request& request,
+    const Option<process::http::authentication::Principal>&
+        principal,
+    const process::Owned<ObjectApprovers>& approvers,
+    MasterStateCopy* copy);
+
+private:
+  Master::Http& http_;
+};
+
+
+Master::Http::Http(Master* _master)
+  : master(_master),
+    quotaHandler(_master),
+    weightsHandler(_master)
+{
+  httpActor = new MasterHttpActor(*this);
+  spawn(*httpActor);
+}
+
+Master::Http::~Http()
+{
+  wait(*httpActor);
+  terminate(*httpActor);
+}
+
+
 string Master::Http::HEALTH_HELP()
 {
   return HELP(
@@ -2981,6 +3034,224 @@ Future<Response> Master::Http::state(
           return ok;
         }));
 }
+
+
+struct MasterStateCopy {
+  process::Time startTime;
+  Option<process::Time> electedTime;
+  MasterInfo info;
+  Option<MasterInfo> leader; // Current leading master.
+  const Flags flags;
+  Master::Slaves slaves;
+  Master::Frameworks frameworks;
+};
+
+
+Future<Response> Master::Http::stateCopy(
+    const Request& request,
+    const Option<Principal>& principal)
+{
+  ::clock_gettime(CLOCK_MONOTONIC, &request.processing);
+
+  // TODO(greggomann): Remove this check once the `Principal` type is used in
+  // `ReservationInfo`, `DiskInfo`, and within the master's `principals` map.
+  // See MESOS-7202.
+  if (principal.isSome() && principal->value.isNone()) {
+    return Forbidden(
+        "The request's authenticated principal contains claims, but no value "
+        "string. The master currently requires that principals have a value");
+  }
+
+  // When current master is not the leader, redirect to the leading master.
+  if (!master->elected()) {
+    return redirect(request);
+  }
+
+  return ObjectApprovers::create(
+      master->authorizer,
+      principal,
+      {VIEW_ROLE, VIEW_FRAMEWORK, VIEW_TASK, VIEW_EXECUTOR, VIEW_FLAGS})
+    .then(defer(master->self(),
+      [this, &request, &principal] (const Owned<ObjectApprovers>& approvers) {
+        MasterStateCopy* copy = new MasterStateCopy {
+          master->startTime,
+          master->electedTime,
+          master->info(),
+          master->leader,
+          master->flags,
+          master->slaves,
+          master->frameworks
+        };
+
+        return defer(
+            httpActor,
+            &MasterHttpActor::_stateCopy,
+            request,
+            principal,
+            approvers,
+            copy);
+      }));
+}
+
+Future<Response> MasterHttpActor::_stateCopy(
+    const Request& request,
+    const Option<Principal>& principal,
+    const Owned<ObjectApprovers>& approvers,
+    MasterStateCopy* copy)
+{
+  auto state = [this, &approvers, copy](JSON::ObjectWriter* writer) {
+    writer->field("version", MESOS_VERSION);
+
+    if (build::GIT_SHA.isSome()) {
+      writer->field("git_sha", build::GIT_SHA.get());
+    }
+
+    if (build::GIT_BRANCH.isSome()) {
+      writer->field("git_branch", build::GIT_BRANCH.get());
+    }
+
+    if (build::GIT_TAG.isSome()) {
+      writer->field("git_tag", build::GIT_TAG.get());
+    }
+
+    writer->field("build_date", build::DATE);
+    writer->field("build_time", build::TIME);
+    writer->field("build_user", build::USER);
+    writer->field("start_time", copy->startTime.secs());
+
+    if (copy->electedTime.isSome()) {
+      writer->field("elected_time", copy->electedTime->secs());
+    }
+
+    writer->field("id", copy->info.id());
+    // writer->field("pid", string(copy->self())); // todo
+
+    double slaves_inactive = 0.0, slaves_active = 0.0;
+    foreachvalue (Slave* slave, copy->slaves.registered) {
+      if (slave->active) {
+        slaves_active++;
+      } else {
+        slaves_inactive++;
+      }
+    }
+
+    writer->field("hostname", copy->info.hostname());
+    writer->field("capabilities", copy->info.capabilities());
+    writer->field("activated_slaves", slaves_active);
+    writer->field("deactivated_slaves", slaves_inactive);
+    writer->field("unreachable_slaves",
+        static_cast<double>(copy->slaves.unreachable.size()));
+
+    if (copy->info.has_domain()) {
+      writer->field("domain", copy->info.domain());
+    }
+
+    // TODO(haosdent): Deprecated this in favor of `leader_info` below.
+    if (copy->leader.isSome()) {
+      writer->field("leader", copy->leader->pid());
+    }
+
+    if (copy->leader.isSome()) {
+      writer->field("leader_info", [this, copy](JSON::ObjectWriter* writer) {
+        json(writer, copy->leader.get());
+      });
+    }
+
+    if (approvers->approved<VIEW_FLAGS>()) {
+      if (copy->flags.cluster.isSome()) {
+        writer->field("cluster", copy->flags.cluster.get());
+      }
+
+      if (copy->flags.log_dir.isSome()) {
+        writer->field("log_dir", copy->flags.log_dir.get());
+      }
+
+      if (copy->flags.external_log_file.isSome()) {
+        writer->field("external_log_file",
+                      copy->flags.external_log_file.get());
+      }
+
+      writer->field("flags", [this, copy](JSON::ObjectWriter* writer) {
+          foreachvalue (const flags::Flag& flag, copy->flags) {
+            Option<string> value = flag.stringify(copy->flags);
+            if (value.isSome()) {
+              writer->field(flag.effective_name().value, value.get());
+            }
+          }
+        });
+    }
+
+    // Model all of the registered slaves.
+    writer->field(
+        "slaves",
+        [this, copy, &approvers](JSON::ArrayWriter* writer) {
+          foreachvalue (Slave* slave, copy->slaves.registered) {
+            writer->element(SlaveWriter(*slave, approvers));
+          }
+        });
+
+    // Model all of the recovered slaves.
+    writer->field(
+        "recovered_slaves",
+        [this, copy](JSON::ArrayWriter* writer) {
+          foreachvalue (
+              const SlaveInfo& slaveInfo, copy->slaves.recovered) {
+            writer->element([&slaveInfo](JSON::ObjectWriter* writer) {
+              json(writer, slaveInfo);
+            });
+          }
+        });
+
+    // Model all of the frameworks.
+    writer->field(
+        "frameworks",
+        [this, copy, &approvers](JSON::ArrayWriter* writer) {
+          foreachvalue (
+              Framework* framework, copy->frameworks.registered) {
+            // Skip unauthorized frameworks.
+            if (!approvers->approved<VIEW_FRAMEWORK>(framework->info)) {
+              continue;
+            }
+
+            writer->element(FullFrameworkWriter(approvers, framework));
+          }
+        });
+
+    // Model all of the completed frameworks.
+    writer->field(
+        "completed_frameworks",
+        [this, copy, &approvers](JSON::ArrayWriter* writer) {
+          foreachvalue (
+              const Owned<Framework>& framework,
+              copy->frameworks.completed) {
+            // Skip unauthorized frameworks.
+            if (!approvers->approved<VIEW_FRAMEWORK>(framework->info)) {
+              continue;
+            }
+
+            writer->element(
+                FullFrameworkWriter(approvers, framework.get()));
+          }
+        });
+
+    // Orphan tasks are no longer possible. We emit an empty array
+    // for the sake of backward compatibility.
+    writer->field("orphan_tasks", [](JSON::ArrayWriter*) {});
+
+    // Unregistered frameworks are no longer possible. We emit an
+    // empty array for the sake of backward compatibility.
+    writer->field("unregistered_frameworks", [](JSON::ArrayWriter*) {});
+  };
+
+  auto ok = OK(jsonify(state), request.url.query.get("jsonp"));
+  ::clock_gettime(CLOCK_MONOTONIC, &request.finished);
+  benchmarking::state_json::logStateRequest(request, ok);
+
+  delete copy;
+
+  return ok;
+}
+
 
 
 Future<Response> Master::Http::readFile(
