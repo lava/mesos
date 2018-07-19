@@ -14,6 +14,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <atomic>
+#include <limits>
+#include <memory>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -21,13 +24,18 @@
 #include <mesos/resources.hpp>
 #include <mesos/version.hpp>
 
+#include <process/async.hpp>
 #include <process/clock.hpp>
 #include <process/collect.hpp>
 #include <process/future.hpp>
+#include <process/loop.hpp>
 #include <process/pid.hpp>
 #include <process/process.hpp>
 #include <process/protobuf.hpp>
+#include <process/statistics.hpp>
 
+#include <stout/duration.hpp>
+#include <stout/os.hpp>
 #include <stout/stopwatch.hpp>
 
 #include "common/protobuf_utils.hpp"
@@ -36,21 +44,32 @@
 
 namespace http = process::http;
 
+using process::async;
 using process::await;
+using process::collect;
+using process::Break;
 using process::Clock;
+using process::Continue;
+using process::ControlFlow;
 using process::Failure;
 using process::Future;
+using process::loop;
 using process::Owned;
 using process::PID;
 using process::ProcessBase;
 using process::Promise;
 using process::spawn;
+using process::Statistics;
 using process::terminate;
 using process::UPID;
+using process::wait;
 
+using std::atomic;
 using std::cout;
 using std::endl;
 using std::make_tuple;
+using std::numeric_limits;
+using std::shared_ptr;
 using std::string;
 using std::tie;
 using std::tuple;
@@ -237,7 +256,7 @@ public:
   ~TestSlave()
   {
     terminate(process.get());
-    process::wait(process.get());
+    wait(process.get());
   }
 
   Future<Nothing> reregister()
@@ -479,6 +498,365 @@ TEST_P(MasterStateQuery_BENCHMARK_Test, GetState)
     cout << "v1 'master::call::GetState' "
          << contentType << " response took " << watch.elapsed() << endl;
   }
+}
+
+
+class MasterActorResponsivenessDelay_BENCHMARK_Test
+  : public MesosTest,
+    public WithParamInterface<tuple<
+      size_t, size_t, size_t, size_t, size_t, size_t, Duration>> {};
+
+
+INSTANTIATE_TEST_CASE_P(
+    AgentFrameworkTaskCount,
+    MasterActorResponsivenessDelay_BENCHMARK_Test,
+    ::testing::Values(
+        make_tuple(100, 10, 10, 10, 10, 50, Milliseconds(200)),
+        make_tuple(1000, 10, 10, 10, 10, 10, Milliseconds(200))));
+
+
+// This test indirectly measures how the Master actor is affected by serving
+// '/state' requests. The response time for a lightweight '/flags' endpoint
+// is taken as a load indicator. We set up a lot of master state from artificial
+// agents and send multiple '/state' and '/flags' queries in parallel with some
+// interval. As the baseline only '/flags' is queried.
+TEST_P(MasterActorResponsivenessDelay_BENCHMARK_Test, WithV0StateLoad)
+{
+  size_t agentCount;
+  size_t frameworksPerAgent;
+  size_t tasksPerFramework;
+  size_t completedFrameworksPerAgent;
+  size_t tasksPerCompletedFramework;
+  size_t numRequests;
+  Duration requestDelay;
+
+  tie(agentCount,
+    frameworksPerAgent,
+    tasksPerFramework,
+    completedFrameworksPerAgent,
+    tasksPerCompletedFramework,
+    numRequests,
+    requestDelay) = GetParam();
+
+  const string indicatorEndpoint = "flags";
+  const string stateEndpoint = "state";
+
+  // Disable authentication to avoid the overhead, since we don't care about
+  // it in this test.
+  master::Flags masterFlags = CreateMasterFlags();
+  masterFlags.authenticate_agents = false;
+
+  Try<Owned<cluster::Master>> master = StartMaster(masterFlags);
+  ASSERT_SOME(master);
+
+  vector<Owned<TestSlave>> slaves;
+
+  for (size_t i = 0; i < agentCount; i++) {
+    SlaveID slaveId;
+    slaveId.set_value("agent" + stringify(i));
+
+    slaves.push_back(Owned<TestSlave>(new TestSlave(
+        master.get()->pid,
+        slaveId,
+        frameworksPerAgent,
+        tasksPerFramework,
+        completedFrameworksPerAgent,
+        tasksPerCompletedFramework)));
+  }
+
+  cout << "Test setup: "
+       << agentCount << " agents with a total of "
+       << frameworksPerAgent * tasksPerFramework * agentCount
+       << " running tasks and "
+       << completedFrameworksPerAgent * tasksPerCompletedFramework * agentCount
+       << " completed tasks; " << numRequests << " '/" << stateEndpoint
+       << "' and '/" << indicatorEndpoint << "' requests will be sent"
+       << " with " << requestDelay << " interval" << endl;
+
+  vector<Future<Nothing>> reregistered;
+
+  foreach (const Owned<TestSlave>& slave, slaves) {
+    reregistered.push_back(slave->reregister());
+  }
+
+  // Wait all agents to finish reregistration.
+  await(reregistered).await();
+
+  Clock::pause();
+  Clock::settle();
+  Clock::resume();
+
+  // A helper sending a single request and measuring the time it takes to
+  // receive a response.
+  auto singleRequest = [master](const string& endpoint) -> Future<Duration> {
+    shared_ptr<Stopwatch> watch(new Stopwatch);
+    watch->start();
+
+    Future<http::Response> response = http::get(
+        master.get()->pid,
+        endpoint,
+        None(),
+        createBasicAuthHeaders(DEFAULT_CREDENTIAL));
+
+    return response.then([watch](const http::Response& r) -> Future<Duration> {
+      watch->stop();
+      EXPECT_EQ(r.status, http::OK().status);
+      return watch->elapsed();
+    });
+  };
+
+  // A helper sending `numRequests` requests with `requestDelayMs` interval.
+  // It prints statistics for the response times.
+  auto repeatedRequests = [singleRequest, numRequests, requestDelay](
+      const string& endpoint) {
+    vector<Future<Duration>> responses;
+    responses.reserve(numRequests);
+
+    for (size_t i = 0; i < numRequests; ++i) {
+      auto f = singleRequest(endpoint);
+      responses.push_back(f);
+      os::sleep(requestDelay);
+    }
+
+    Future<vector<Duration>> durations = process::collect(responses);
+    durations.await();
+
+    Option<Statistics<Duration>> s = Statistics<Duration>::from(
+        durations->cbegin(), durations->cend());
+    EXPECT_SOME(s);
+
+    cout << "'/" << endpoint << "' response [min, p25, p50, p75, p90, max]:"
+         << " [" << s->min << ", " << s->p25 << ", " << s->p50 << ", "
+         << s->p75 << ", " << s->p90 << ", " << s->max << "]"
+         << " from " << durations->size() << " measurements" << endl;
+  };
+
+  // First measure the average response time for the `indicatorEndpoint` only
+  // as the baseline.
+  cout << "Launching " << numRequests << " '/" << indicatorEndpoint << "'"
+       << " requests" << endl;
+
+  Future<Nothing> indicatorFinished = async(
+      repeatedRequests, indicatorEndpoint);
+  indicatorFinished.await();
+
+  Clock::pause();
+  Clock::settle();
+  Clock::resume();
+
+  // Now measure the average response times when request for both
+  // `indicatorEndpoint` and `stateEndpoint` are sent in parallel.
+  cout << "Launching " << numRequests << " '/" << stateEndpoint << "'"
+       << " requests in background" << endl
+       << "Launching " << numRequests << " '/" << indicatorEndpoint << "'"
+       << " requests" << endl;
+
+  Future<Nothing> stateFinished = async(repeatedRequests, stateEndpoint);
+  indicatorFinished = async(repeatedRequests, indicatorEndpoint);
+
+  indicatorFinished.await();
+  stateFinished.await();
+}
+
+
+class MasterActorResponsivenessMulticlient_BENCHMARK_Test
+  : public MesosTest,
+    public WithParamInterface<tuple<
+      size_t, size_t, size_t, size_t, size_t, size_t, size_t>> {};
+
+
+INSTANTIATE_TEST_CASE_P(
+    AgentFrameworkTaskCount,
+    MasterActorResponsivenessMulticlient_BENCHMARK_Test,
+    ::testing::Values(
+        make_tuple(100, 10, 10, 10, 10, 50, 5),
+        make_tuple(1000, 10, 10, 10, 10, 10, 5)));
+
+
+// This test indirectly measures how the Master actor is affected by serving
+// '/state' requests. The response time for a lightweight '/flags' endpoint
+// is taken as a load indicator. We set up a lot of master state from artificial
+// agents and send multiple '/state' queries while constantly probing '/flags'.
+// As the baseline only '/flags' is queried.
+TEST_P(MasterActorResponsivenessMulticlient_BENCHMARK_Test, WithV0StateLoad)
+{
+  size_t agentCount;
+  size_t frameworksPerAgent;
+  size_t tasksPerFramework;
+  size_t completedFrameworksPerAgent;
+  size_t tasksPerCompletedFramework;
+  size_t numRequests;
+  size_t numClients;
+
+  tie(agentCount,
+    frameworksPerAgent,
+    tasksPerFramework,
+    completedFrameworksPerAgent,
+    tasksPerCompletedFramework,
+    numRequests,
+    numClients) = GetParam();
+
+  const string indicatorEndpoint = "flags";
+  const string stateEndpoint = "state";
+
+  // Disable authentication to avoid the overhead, since we don't care about
+  // it in this test.
+  master::Flags masterFlags = CreateMasterFlags();
+  masterFlags.authenticate_agents = false;
+
+  Try<Owned<cluster::Master>> master = StartMaster(masterFlags);
+  ASSERT_SOME(master);
+
+  vector<Owned<TestSlave>> slaves;
+
+  for (size_t i = 0; i < agentCount; i++) {
+    SlaveID slaveId;
+    slaveId.set_value("agent" + stringify(i));
+
+    slaves.push_back(Owned<TestSlave>(new TestSlave(
+        master.get()->pid,
+        slaveId,
+        frameworksPerAgent,
+        tasksPerFramework,
+        completedFrameworksPerAgent,
+        tasksPerCompletedFramework)));
+  }
+
+  cout << "Test setup: " << agentCount << " agents with a total of "
+       << frameworksPerAgent * tasksPerFramework * agentCount
+       << " running tasks and "
+       << completedFrameworksPerAgent * tasksPerCompletedFramework * agentCount
+       << " completed tasks; " << numRequests << " '/" << stateEndpoint
+       << "' requests will be sent while constantly probing '/"
+       << indicatorEndpoint << "'" << endl;
+
+  vector<Future<Nothing>> reregistered;
+
+  foreach (const Owned<TestSlave>& slave, slaves) {
+    reregistered.push_back(slave->reregister());
+  }
+
+  // Wait all agents to finish reregistration.
+  await(reregistered).await();
+
+  Clock::pause();
+  Clock::settle();
+  Clock::resume();
+
+  // A helper sending a single request and measuring the time it takes to
+  // receive a response.
+  auto singleRequest = [master](const string& endpoint) -> Future<Duration> {
+    shared_ptr<Stopwatch> watch(new Stopwatch);
+    watch->start();
+
+    Future<http::Response> response = http::get(
+        master.get()->pid,
+        endpoint,
+        None(),
+        createBasicAuthHeaders(DEFAULT_CREDENTIAL));
+
+    return response.then([watch](const http::Response& r) -> Future<Duration> {
+      watch->stop();
+      EXPECT_EQ(r.status, http::OK().status);
+      return watch->elapsed();
+    });
+  };
+
+  // Synchronizes completion of all lambdas sending requests.
+  atomic<bool> stop = ATOMIC_VAR_INIT(false);
+
+  // A helper sending `numRequests` requests to `endpoint`. An early exist is
+  // possible if `stop` is set. Note that this lambda sets `stop` once
+  // `numRequests` requests have been sent. The intention is to synchronize
+  // completion across all running lambdas. Also prints statistics for the
+  // response times.
+  auto repeateRequests = [singleRequest, &stop](
+      const string& endpoint, size_t numRequests) -> vector<Duration> {
+    vector<Duration> durations;
+
+    size_t remaining = numRequests;
+    auto f = loop(
+        None(),
+        [=]() {
+          return singleRequest(endpoint);
+        },
+        [&remaining, &durations, &stop](
+            const Duration& d) -> ControlFlow<Nothing> {
+          durations.push_back(d);
+
+          if (--remaining <= 0) {
+            stop.store(true);
+          }
+
+          if (stop.load()) {
+            return Break();
+          } else {
+            return Continue();
+          }
+        });
+
+    f.await();
+    EXPECT_TRUE(f.isReady());
+
+    return durations;
+  };
+
+  auto printStats = [](
+      const vector<Duration>& durations, const string& endpoint) {
+    Option<Statistics<Duration>> s = Statistics<Duration>::from(
+          durations.cbegin(), durations.cend());
+    EXPECT_SOME(s);
+
+    cout << "'/" << endpoint << "' response [min, p25, p50, p75, p90, max]:"
+         << " [" << s->min << ", " << s->p25 << ", " << s->p50 << ", "
+         << s->p75 << ", " << s->p90 << ", " << s->max << "]"
+         << " from " << s->count << " measurements" << endl;
+  };
+
+  // First measure the average response time for the `indicatorEndpoint` only
+  // as the baseline.
+  cout << "Launching " << numRequests << " '/" << indicatorEndpoint << "'"
+       << " requests" << endl;
+
+  Future<vector<Duration>> indicatorFinished = async(
+      repeateRequests, indicatorEndpoint, numRequests);
+  indicatorFinished.await();
+
+  printStats(indicatorFinished.get(), indicatorEndpoint);
+
+  Clock::pause();
+  Clock::settle();
+  Clock::resume();
+
+  // Now measure the average response times when request for both
+  // `indicatorEndpoint` and `stateEndpoint` are sent in parallel.
+  // Stop when `numRequests` to `stateEndpoint` have been sent.
+  stop.store(false);
+
+  cout << "Launching " << numClients << " * " << numRequests << " '/"
+       << stateEndpoint << "'" << " requests in background" << endl
+       << "Launching " << numRequests << " '/" << indicatorEndpoint << "'"
+       << " requests" << endl;
+
+  vector<Future<vector<Duration>>> stateFinished;
+  while (numClients-- > 0) {
+    stateFinished.push_back(async(repeateRequests, stateEndpoint, numRequests));
+  }
+
+  indicatorFinished = async(
+      repeateRequests, indicatorEndpoint, numeric_limits<size_t>::max());
+
+  auto collected = collect(stateFinished);
+  collected.await();
+  indicatorFinished.await();
+
+  printStats(indicatorFinished.get(), indicatorEndpoint);
+
+  vector<Duration> res;
+  foreach (const auto& v, collected.get()) {
+    res.insert(res.end(), v.cbegin(), v.cend());
+  }
+  printStats(res, stateEndpoint);
 }
 
 
