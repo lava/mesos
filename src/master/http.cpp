@@ -447,6 +447,36 @@ struct SlaveWriter
 };
 
 
+struct FrameworkStateCopy;
+struct SlaveStateCopy;
+
+// TODO(bevers) - we ultimately should have at most one writer.
+struct SlaveCopyWriter
+{
+  SlaveCopyWriter(
+      const SlaveStateCopy& slave,
+      const Owned<ObjectApprovers>& approvers);
+
+  void operator()(JSON::ObjectWriter* writer) const;
+
+  const SlaveStateCopy& copy_;
+  const Owned<ObjectApprovers>& approvers_;
+};
+
+struct FullFrameworkCopyWriter {
+  FullFrameworkCopyWriter(
+      const FrameworkStateCopy& framework,
+      const Owned<ObjectApprovers>& approvers);
+
+  void operator()(JSON::ObjectWriter* writer) const;
+
+  const FrameworkStateCopy& copy_;
+  const Owned<ObjectApprovers>& approvers_;
+};
+
+// TODO(bennoe) - The writer situation in general seems a bit confusing in
+// this file, e.g. this is only used by the `/slaves` endpoint but not by
+// `/state` etc.
 struct SlavesWriter
 {
   SlavesWriter(
@@ -2143,8 +2173,8 @@ Master::Http::Http(Master* _master)
 
 Master::Http::~Http()
 {
-  process::wait(*httpActor);
   process::terminate(*httpActor);
+  process::wait(*httpActor);
 }
 
 
@@ -2860,6 +2890,17 @@ string Master::Http::STATE_HELP()
 }
 
 
+Future<Response> Master::Http::state2(
+    const Request& request,
+    const Option<Principal>& principal) const
+{
+  return dispatch(
+      httpActor->self(),
+      &StateActor::stateCopy,
+      request,
+      principal);
+}
+
 Future<Response> Master::Http::state(
     const Request& request,
     const Option<Principal>& principal) const
@@ -3037,7 +3078,55 @@ Future<Response> Master::Http::state(
 }
 
 
+struct SlaveStateCopy {
+  SlaveStateCopy(Slave* slave);
+  SlaveStateCopy(SlaveStateCopy&& other);
+
+  SlaveID id;
+  SlaveInfo info;
+  protobuf::slave::Capabilities capabilities;
+  process::UPID pid;
+  process::Time registeredTime;
+  Option<process::Time> reregisteredTime;
+  Resources totalResources;
+  Resources usedResources;
+  Resources offeredResources;
+  bool active;
+  std::string version;
+};
+
+
+struct FrameworkStateCopy {
+  FrameworkStateCopy(Framework* framework);
+  FrameworkStateCopy(FrameworkStateCopy&& other);
+
+  FrameworkID id;
+  Option<process::UPID> pid;
+  FrameworkInfo info;
+  protobuf::framework::Capabilities capabilities;
+  process::Time registeredTime;
+  process::Time reregisteredTime;
+  process::Time unregisteredTime;
+  bool active;
+  bool connected;
+  bool recovered;
+  Resources totalUsedResources;
+  Resources totalOfferedResources;
+  std::vector<TaskInfo> pendingTasks;
+  // Note that `Task` and `Offer` are actually
+  // protobuf-generated classes.
+  std::vector<Task> tasks;
+  std::vector<Task> unreachableTasks;
+  std::vector<Task> completedTasks;
+  std::vector<Offer> offers;
+  std::vector<std::pair<SlaveID, ExecutorInfo>> executors;
+};
+
+
 struct MasterStateCopy {
+  MasterStateCopy(const Master* master);
+  MasterStateCopy(MasterStateCopy&& other);
+
   // Auxiliary data.
   Owned<ObjectApprovers> approvers;
   struct timespec masterEntered;
@@ -3047,12 +3136,381 @@ struct MasterStateCopy {
   process::Time startTime;
   Option<process::Time> electedTime;
   MasterInfo info;
+  process::UPID pid;
   Option<MasterInfo> leader;
   const Flags flags;
-  Master::Slaves slaves;
-  Master::Frameworks frameworks;
+
+  int activatedSlaves;
+  int deactivatedSlaves;
+  int unreachableSlaves;
+  std::vector<SlaveInfo> recoveredSlaves;
+  std::vector<SlaveStateCopy> slaves;
+
+  std::vector<FrameworkStateCopy> frameworks;
+  std::vector<FrameworkStateCopy> completedFrameworks;
+  std::vector<FrameworkStateCopy> unregisteredFrameworks;
 };
 
+
+SlaveStateCopy::SlaveStateCopy(SlaveStateCopy&& other) = default;
+
+
+SlaveStateCopy::SlaveStateCopy(Slave* slave)
+  : id(slave->id)
+  , info(slave->info)
+  , capabilities(slave->capabilities)
+  , pid(slave->pid)
+  , registeredTime(slave->registeredTime)
+  , reregisteredTime(slave->reregisteredTime)
+  , totalResources(slave->totalResources)
+  , usedResources(Resources::sum(slave->usedResources))
+  , offeredResources(slave->offeredResources)
+  , active(slave->active)
+  , version(slave->version)
+{}
+
+
+
+FrameworkStateCopy::FrameworkStateCopy(FrameworkStateCopy&& other) = default;
+
+
+FrameworkStateCopy::FrameworkStateCopy(master::Framework* framework)
+  : id(framework->id())
+  , pid(framework->pid)
+  , info(framework->info)
+  , capabilities(framework->capabilities)
+  , registeredTime(framework->registeredTime)
+  , reregisteredTime(framework->reregisteredTime)
+  , unregisteredTime(framework->unregisteredTime)
+  , active(framework->active())
+  , connected(framework->connected())
+  , recovered(framework->recovered())
+  , totalUsedResources(framework->totalUsedResources)
+  , totalOfferedResources(framework->totalOfferedResources)
+{
+  // Data for "executors"
+  size_t executorsCount = 0;
+  foreachvalue(const auto& executorsMap, framework->executors) {
+    executorsCount += executorsMap.size();
+  }
+
+  executors.reserve(executorsCount);
+  foreachpair (
+      const SlaveID& slaveId,
+      const auto& executorsMap,
+      framework->executors) {
+    foreachvalue (const ExecutorInfo& executor, executorsMap) {
+      executors.push_back(std::make_pair(slaveId, executor));
+    }
+  }
+
+  // Data for "tasks"
+  tasks.reserve(framework->tasks.size());
+  foreachvalue(const Task* task, framework->tasks) {
+    tasks.push_back(*task);
+  }
+
+  pendingTasks.reserve(framework->pendingTasks.size());
+  foreachvalue(const TaskInfo& taskInfo, framework->pendingTasks) {
+    pendingTasks.push_back(taskInfo);
+  }
+
+  // Data for "unreachable_tasks"
+  unreachableTasks.reserve(framework->unreachableTasks.size());
+  foreachvalue(const process::Owned<Task>& task, framework->unreachableTasks) {
+    unreachableTasks.push_back(*task);
+  }
+
+  // Data for "completed_tasks"
+  completedTasks.reserve(framework->completedTasks.size());
+  foreach (const process::Owned<Task>& task, framework->completedTasks) {
+    completedTasks.push_back(*task);
+  }
+
+  // Data for "offers"
+  offers.reserve(framework->offers.size());
+  foreach(Offer* offer, framework->offers) {
+    offers.push_back(*offer);
+  }
+}
+
+
+MasterStateCopy::MasterStateCopy(MasterStateCopy&& other) = default;
+
+
+MasterStateCopy::MasterStateCopy(const Master* master)
+  : approvers(nullptr)
+  , startTime(master->startTime)
+  , electedTime(master->electedTime)
+  , info(master->info())
+  , pid(master->self())
+  , leader(master->leader)
+  , flags(master->flags)
+  , activatedSlaves(0)
+  , deactivatedSlaves(0)
+  , unreachableSlaves(master->slaves.unreachable.size())
+{
+  // Data for "frameworks".
+  frameworks.reserve(master->frameworks.registered.size());
+  foreachvalue(Framework* framework, master->frameworks.registered) {
+    frameworks.push_back(FrameworkStateCopy(framework));
+  }
+
+  // Data for "completed_frameworks".
+  completedFrameworks.reserve(master->frameworks.completed.size());
+  foreachvalue(
+      const process::Owned<Framework>& framework,
+      master->frameworks.completed)
+  {
+    completedFrameworks.push_back(FrameworkStateCopy(framework.get()));
+  }
+
+  // Data for "slaves", "activated_slaves" and "deactivated_slaves".
+  slaves.reserve(master->slaves.registered.size());
+  foreachvalue (Slave* slave, master->slaves.registered) {
+    slaves.push_back(SlaveStateCopy(slave));
+    if (slave->active) {
+      ++activatedSlaves;
+    } else {
+      ++deactivatedSlaves;
+    }
+  }
+
+  // Data for "recovered_slaves".
+  recoveredSlaves.reserve(master->slaves.recovered.size());
+  foreachvalue (
+      const SlaveInfo& slaveInfo, master->slaves.recovered) {
+    recoveredSlaves.push_back(slaveInfo);
+  }
+}
+
+FullFrameworkCopyWriter::FullFrameworkCopyWriter(
+    const FrameworkStateCopy& framework,
+    const Owned<ObjectApprovers>& approvers)
+  : copy_(framework)
+  , approvers_(approvers)
+{}
+
+
+void FullFrameworkCopyWriter::operator()(JSON::ObjectWriter* writer) const
+{
+  // TODO(bevers):
+  // The following part is borrowed from the printing of Summary<Framework>,
+  // and they will eventually need to go back into a separate function.
+  writer->field("id", copy_.id.value());
+  writer->field("name", copy_.info.name());
+
+  // Omit pid for http frameworks.
+  if (copy_.pid.isSome()) {
+    writer->field("pid", std::string(copy_.pid.get()));
+  }
+
+  // TODO(bmahler): Use these in the webui.
+  writer->field("used_resources", copy_.totalUsedResources);
+  writer->field("offered_resources", copy_.totalOfferedResources);
+  writer->field("capabilities", copy_.info.capabilities());
+  writer->field("hostname", copy_.info.hostname());
+  writer->field("webui_url", copy_.info.webui_url());
+  writer->field("active", copy_.active);
+  writer->field("connected", copy_.connected);
+  writer->field("recovered", copy_.recovered);
+
+  // -- end of Summary<Framework>
+
+
+  // Add additional fields to those generated by the
+  // `Summary<Framework>` overload.
+  writer->field("user", copy_.info.user());
+  writer->field("failover_timeout", copy_.info.failover_timeout());
+  writer->field("checkpoint", copy_.info.checkpoint());
+  writer->field("registered_time", copy_.registeredTime.secs());
+  writer->field("unregistered_time", copy_.unregisteredTime.secs());
+
+  if (copy_.info.has_principal()) {
+    writer->field("principal", copy_.info.principal());
+  }
+
+  // TODO(bmahler): Consider deprecating this in favor of the split
+  // used and offered resources added in `Summary<Framework>`.
+  writer->field(
+      "resources",
+      copy_.totalUsedResources + copy_.totalOfferedResources);
+
+  // TODO(benh): Consider making reregisteredTime an Option.
+  if (copy_.registeredTime != copy_.reregisteredTime) {
+    writer->field("reregistered_time", copy_.reregisteredTime.secs());
+  }
+
+  // For multi-role frameworks the `role` field will be unset.
+  // Note that we could set `roles` here for both cases, which
+  // would make tooling simpler (only need to look for `roles`).
+  // However, we opted to just mirror the protobuf akin to how
+  // generic protobuf -> JSON translation works.
+  if (copy_.capabilities.multiRole) {
+    writer->field("roles", copy_.info.roles());
+  } else {
+    writer->field("role", copy_.info.role());
+  }
+
+  // Model all of the tasks associated with a framework.
+  writer->field("tasks", [this](JSON::ArrayWriter* writer) {
+    foreach (const TaskInfo& taskInfo, copy_.pendingTasks) {
+      // Skip unauthorized tasks.
+      if (!approvers_->approved<VIEW_TASK>(taskInfo, copy_.info)) {
+        continue;
+      }
+
+      writer->element([this, &taskInfo](JSON::ObjectWriter* writer) {
+        writer->field("id", taskInfo.task_id().value());
+        writer->field("name", taskInfo.name());
+        writer->field("framework_id", copy_.id.value());
+
+        writer->field(
+            "executor_id",
+            taskInfo.executor().executor_id().value());
+
+        writer->field("slave_id", taskInfo.slave_id().value());
+        writer->field("state", TaskState_Name(TASK_STAGING));
+        writer->field("resources", Resources(taskInfo.resources()));
+
+        // Tasks are not allowed to mix resources allocated to
+        // different roles, see MESOS-6636.
+        writer->field(
+            "role",
+            taskInfo.resources().begin()->allocation_info().role());
+
+        writer->field("statuses", std::initializer_list<TaskStatus>{});
+
+        if (taskInfo.has_labels()) {
+          writer->field("labels", taskInfo.labels());
+        }
+
+        if (taskInfo.has_discovery()) {
+          writer->field("discovery", JSON::Protobuf(taskInfo.discovery()));
+        }
+
+        if (taskInfo.has_container()) {
+          writer->field("container", JSON::Protobuf(taskInfo.container()));
+        }
+      });
+    }
+
+    // foreach (const TaskStateCopy& task, copy_.tasks) {
+    foreach (const Task& task, copy_.tasks) {
+      // Skip unauthorized tasks.
+
+      // if (!approvers_->approved<VIEW_TASK>(task.info, copy_.info)) {
+      if (!approvers_->approved<VIEW_TASK>(task, copy_.info)) {
+        continue;
+      }
+
+      // writer->element(TaskCopyWriter(task));
+      writer->element(task);
+    }
+  });
+
+  writer->field("unreachable_tasks", [this](JSON::ArrayWriter* writer) {
+    foreach (const Task& task, copy_.unreachableTasks) {
+      // Skip unauthorized tasks.
+      if (!approvers_->approved<VIEW_TASK>(task, copy_.info)) {
+        continue;
+      }
+
+      writer->element(task);
+    }
+  });
+
+  writer->field("completed_tasks", [this](JSON::ArrayWriter* writer) {
+    foreach (const Task& task, copy_.completedTasks) {
+      // Skip unauthorized tasks.
+      if (!approvers_->approved<VIEW_TASK>(task, copy_.info)) {
+        continue;
+      }
+
+      writer->element(task);
+    }
+  });
+
+  // Model all of the offers associated with a framework.
+  writer->field("offers", [this](JSON::ArrayWriter* writer) {
+    foreach (const Offer& offer, copy_.offers) {
+      writer->element(offer);
+    }
+  });
+
+  // Model all of the executors of a framework.
+  writer->field("executors", [this](JSON::ArrayWriter* writer) {
+    foreachpair (
+        const SlaveID& slaveId,
+        const ExecutorInfo& executor,
+        copy_.executors)
+    {
+      // foreachvalue (const ExecutorInfo& executor, executorsMap) {
+        writer->element([this,
+                         &executor,
+                         &slaveId](JSON::ObjectWriter* writer) {
+          // Skip unauthorized executors.
+          if (!approvers_->approved<VIEW_EXECUTOR>(
+                  executor, copy_.info)) {
+            return;
+          }
+
+          json(writer, executor);
+          writer->field("slave_id", slaveId.value());
+        });
+      // }
+    }
+  });
+
+  // Model all of the labels associated with a framework.
+  if (copy_.info.has_labels()) {
+    writer->field("labels", copy_.info.labels());
+  }
+}
+
+
+SlaveCopyWriter::SlaveCopyWriter(
+    const SlaveStateCopy& slave,
+    const Owned<ObjectApprovers>& approvers)
+  : copy_(slave)
+  , approvers_(approvers)
+{}
+
+
+void SlaveCopyWriter::operator()(JSON::ObjectWriter* writer) const
+{
+    json(writer, copy_.info);
+
+    writer->field("pid", string(copy_.pid));
+    writer->field("registered_time", copy_.registeredTime.secs());
+
+    if (copy_.reregisteredTime.isSome()) {
+      writer->field("reregistered_time", copy_.reregisteredTime->secs());
+    }
+
+    const Resources& totalResources = copy_.totalResources;
+    writer->field("resources", totalResources);
+    writer->field("used_resources", copy_.usedResources);
+    writer->field("offered_resources", copy_.offeredResources);
+    writer->field(
+        "reserved_resources",
+        [&totalResources, this](JSON::ObjectWriter* writer) {
+          foreachpair (const string& role, const Resources& reservation,
+                       totalResources.reservations()) {
+            // TODO(arojas): Consider showing unapproved resources in an
+            // aggregated special field, so that all resource values add up
+            // MESOS-7779.
+            if (approvers_->approved<VIEW_ROLE>(role)) {
+              writer->field(role, reservation);
+            }
+          }
+        });
+    writer->field("unreserved_resources", totalResources.unreserved());
+
+    writer->field("active", copy_.active);
+    writer->field("version", copy_.version);
+    writer->field("capabilities", copy_.capabilities.toRepeatedPtrField());
+}
 
 
 Future<MasterStateCopy*>
@@ -3072,18 +3530,7 @@ Master::Http::stateCopy(
           principal,
           {VIEW_ROLE, VIEW_FRAMEWORK, VIEW_TASK, VIEW_EXECUTOR, VIEW_FLAGS});
 
-    MasterStateCopy* copy = new MasterStateCopy {
-      nullptr,
-      masterEntered,
-      masterEntered, // will be overwritten below
-      master->startTime,
-      master->electedTime,
-      master->info(),
-      master->leader,
-      master->flags,
-      master->slaves,
-      master->frameworks
-    };
+    MasterStateCopy* copy = new MasterStateCopy(master);
 
     // Technically we should probably add the time spent in the callbacks
     // below (assuming they're executed in the context of the same actor?)
@@ -3163,23 +3610,13 @@ Future<Response> StateActor::_stateCopy(
     }
 
     writer->field("id", copy->info.id());
-    // writer->field("pid", string(copy->self())); // todo
-
-    double slaves_inactive = 0.0, slaves_active = 0.0;
-    foreachvalue (Slave* slave, copy->slaves.registered) {
-      if (slave->active) {
-        slaves_active++;
-      } else {
-        slaves_inactive++;
-      }
-    }
-
+    writer->field("pid", stringify(copy->pid));
     writer->field("hostname", copy->info.hostname());
     writer->field("capabilities", copy->info.capabilities());
-    writer->field("activated_slaves", slaves_active);
-    writer->field("deactivated_slaves", slaves_inactive);
+    writer->field("activated_slaves", copy->activatedSlaves);
+    writer->field("deactivated_slaves", copy->deactivatedSlaves);
     writer->field("unreachable_slaves",
-        static_cast<double>(copy->slaves.unreachable.size()));
+        static_cast<double>(copy->unreachableSlaves));
 
     if (copy->info.has_domain()) {
       writer->field("domain", copy->info.domain());
@@ -3224,8 +3661,8 @@ Future<Response> StateActor::_stateCopy(
     writer->field(
         "slaves",
         [this, copy, &approvers](JSON::ArrayWriter* writer) {
-          foreachvalue (Slave* slave, copy->slaves.registered) {
-            writer->element(SlaveWriter(*slave, approvers));
+          foreach (SlaveStateCopy& slave, copy->slaves) {
+            writer->element(SlaveCopyWriter(slave, approvers));
           }
         });
 
@@ -3233,8 +3670,8 @@ Future<Response> StateActor::_stateCopy(
     writer->field(
         "recovered_slaves",
         [this, copy](JSON::ArrayWriter* writer) {
-          foreachvalue (
-              const SlaveInfo& slaveInfo, copy->slaves.recovered) {
+          foreach (
+              const SlaveInfo& slaveInfo, copy->recoveredSlaves) {
             writer->element([&slaveInfo](JSON::ObjectWriter* writer) {
               json(writer, slaveInfo);
             });
@@ -3245,14 +3682,16 @@ Future<Response> StateActor::_stateCopy(
     writer->field(
         "frameworks",
         [this, copy, &approvers](JSON::ArrayWriter* writer) {
-          foreachvalue (
-              Framework* framework, copy->frameworks.registered) {
+          foreach (
+              const FrameworkStateCopy& framework,
+              copy->frameworks)
+          {
             // Skip unauthorized frameworks.
-            if (!approvers->approved<VIEW_FRAMEWORK>(framework->info)) {
+            if (!approvers->approved<VIEW_FRAMEWORK>(framework.info)) {
               continue;
             }
 
-            writer->element(FullFrameworkWriter(approvers, framework));
+            writer->element(FullFrameworkCopyWriter(framework, approvers));
           }
         });
 
@@ -3260,16 +3699,17 @@ Future<Response> StateActor::_stateCopy(
     writer->field(
         "completed_frameworks",
         [this, copy, &approvers](JSON::ArrayWriter* writer) {
-          foreachvalue (
-              const Owned<Framework>& framework,
-              copy->frameworks.completed) {
+          foreach(
+              const FrameworkStateCopy& framework,
+              copy->completedFrameworks)
+          {
             // Skip unauthorized frameworks.
-            if (!approvers->approved<VIEW_FRAMEWORK>(framework->info)) {
+            if (!approvers->approved<VIEW_FRAMEWORK>(framework.info)) {
               continue;
             }
 
             writer->element(
-                FullFrameworkWriter(approvers, framework.get()));
+                FullFrameworkCopyWriter(framework, approvers));
           }
         });
 

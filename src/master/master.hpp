@@ -116,8 +116,8 @@ struct Role;
 
 struct Slave
 {
-Slave(Master* const _master,
-      SlaveInfo _info,
+  Slave(Master* const _master,
+        SlaveInfo _info,
         const process::UPID& _pid,
         const MachineID& _machineId,
         const std::string& _version,
@@ -316,7 +316,7 @@ Slave(Master* const _master,
   hashmap<ResourceProviderID, ResourceProvider> resourceProviders;
 
 private:
-  Slave(const Slave&);              // No copying.
+  Slave(const Slave&);            // No copying.
   Slave& operator=(const Slave&); // No assigning.
 };
 
@@ -1419,6 +1419,12 @@ public:
         const Option<process::http::authentication::Principal>&
             principal) const;
 
+    // just for testing purposes
+    process::Future<process::http::Response> state2(
+        const process::http::Request& request,
+        const Option<process::http::authentication::Principal>&
+            principal) const;
+
     // /master/state-copy
     process::Future<MasterStateCopy*> stateCopy(
       // const process::http::Request& request,
@@ -1810,6 +1816,7 @@ private:
   friend struct Slave;
   friend struct SlavesWriter;
   friend struct Subscriber;
+  friend struct MasterStateCopy;
 
   // NOTE: Since 'getOffer', 'getInverseOffer' and 'slaves' are
   // protected, we need to make the following functions friends.
@@ -1863,6 +1870,7 @@ public:
   struct Slaves
   {
     Slaves() : removed(MAX_REMOVED_SLAVES) {}
+
     Slaves(const Slaves& other)
       : recoveredTimer(other.recoveredTimer)
       , recovered(other.recovered)
@@ -3039,7 +3047,7 @@ private:
     }
   }
 
-  Framework(const Framework&);              // No copying.
+  Framework(const Framework&);            // No copying.
   Framework& operator=(const Framework&); // No assigning.
 };
 

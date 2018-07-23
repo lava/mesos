@@ -1036,7 +1036,7 @@ void Master::initialize()
         [this](const process::http::Request& request,
                const Option<Principal>& principal) {
           logRequest(request);
-          return http.state(request, principal);
+          return http.state2(request, principal);
         });
   route("/state-summary",
         READONLY_HTTP_AUTHENTICATION_REALM,
