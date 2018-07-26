@@ -88,6 +88,8 @@
 
 #include "version/version.hpp"
 
+#include <libbenchmark.hpp>
+
 using google::protobuf::RepeatedPtrField;
 
 using process::AUTHENTICATION;
@@ -3066,7 +3068,9 @@ Future<Response> Master::Http::state(
             writer->field("unregistered_frameworks", [](JSON::ArrayWriter*) {});
           };
 
+          benchmark::SideChannelCollector c("/tmp/state-copy.py", "statejson_serializing");
           auto ok = OK(jsonify(state), request.url.query.get("jsonp"));
+          c.split_after(ok, ok.body.size() / 1024 / 1024);
 
           ::clock_gettime(CLOCK_MONOTONIC, &request.masterExited);
           ::clock_gettime(CLOCK_MONOTONIC, &request.finished);
@@ -3530,7 +3534,9 @@ Master::Http::stateCopy(
           principal,
           {VIEW_ROLE, VIEW_FRAMEWORK, VIEW_TASK, VIEW_EXECUTOR, VIEW_FLAGS});
 
+    benchmark::SideChannelCollector c("/tmp/state-copy.py", "deepcopy_copying");
     MasterStateCopy* copy = new MasterStateCopy(master);
+    c.split_after(copy);
 
     // Technically we should probably add the time spent in the callbacks
     // below (assuming they're executed in the context of the same actor?)
@@ -3722,7 +3728,10 @@ Future<Response> StateActor::_stateCopy(
     writer->field("unregistered_frameworks", [](JSON::ArrayWriter*) {});
   };
 
+  benchmark::SideChannelCollector c("/tmp/state-copy.py", "deepcopy_serializing");
   auto ok = OK(jsonify(state), request.url.query.get("jsonp"));
+  c.split_after(ok, ok.body.size() / 1024 / 1024);
+
   ::clock_gettime(CLOCK_MONOTONIC, &request.finished);
   request.masterEntered = copy->masterEntered;
   request.masterExited = copy->masterExited;
