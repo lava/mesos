@@ -232,6 +232,7 @@ Future<map<string, double>> MetricsProcess::__snapshot(
 
     if (statistics_.isSome()) {
       snapshot[key + "/count"] = static_cast<double>(statistics_->count);
+      // TODO(alexr): Consider exposing p25 and p75 percentiles.
       snapshot[key + "/min"] = statistics_->min;
       snapshot[key + "/max"] = statistics_->max;
       snapshot[key + "/p50"] = statistics_->p50;
