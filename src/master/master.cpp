@@ -11528,7 +11528,7 @@ SlaveID Master::newSlaveId()
 }
 
 
-double Master::_slaves_connected()
+double Master::_const_slaves_connected() const
 {
   double count = 0.0;
   foreachvalue (Slave* slave, slaves.registered) {
@@ -11539,8 +11539,13 @@ double Master::_slaves_connected()
   return count;
 }
 
+double Master::_slaves_connected()
+{
+  return _const_slaves_connected();
+}
 
-double Master::_slaves_disconnected()
+
+double Master::_const_slaves_disconnected() const
 {
   double count = 0.0;
   foreachvalue (Slave* slave, slaves.registered) {
@@ -11552,7 +11557,13 @@ double Master::_slaves_disconnected()
 }
 
 
-double Master::_slaves_active()
+double Master::_slaves_disconnected()
+{
+  return _const_slaves_disconnected();
+}
+
+
+double Master::_const_slaves_active() const
 {
   double count = 0.0;
   foreachvalue (Slave* slave, slaves.registered) {
@@ -11564,7 +11575,13 @@ double Master::_slaves_active()
 }
 
 
-double Master::_slaves_inactive()
+double Master::_slaves_active()
+{
+  return _const_slaves_active();
+}
+
+
+double Master::_const_slaves_inactive() const
 {
   double count = 0.0;
   foreachvalue (Slave* slave, slaves.registered) {
@@ -11576,9 +11593,21 @@ double Master::_slaves_inactive()
 }
 
 
-double Master::_slaves_unreachable()
+double Master::_slaves_inactive()
+{
+  return _const_slaves_inactive();
+}
+
+
+double Master::_const_slaves_unreachable() const
 {
   return static_cast<double>(slaves.unreachable.size());
+}
+
+
+double Master::_slaves_unreachable()
+{
+  return _const_slaves_unreachable();
 }
 
 
