@@ -1892,7 +1892,6 @@ private:
           const process::http::Request&,
           const process::Owned<ObjectApprovers>&) const;
 
-
     process::Future<process::http::Response> deferBatchedRequest(
         ReadOnlyRequestHandler handler,
         const process::http::Request& request,
@@ -1902,11 +1901,21 @@ private:
 
     struct BatchedRequest
     {
-      ReadOnlyRequestHandler handler;
-      process::http::Request request;
-      process::Owned<ObjectApprovers> approvers;
+      // ReadOnlyRequestHandler handler; // Not needed anymore
+      // process::http::Request request; // todo - replace with more generic info.
+      Option<std::string> jsonp;
+      process::Owned<ObjectApprovers> approvers; // should be unique_ptr
       process::Promise<process::http::Response> promise;
     };
+
+    struct RequestIdentifier
+    {
+      ReadOnlyRequestHandler handler;
+      Option<Principal> principal
+      // std::string principal;
+    };
+
+    std::map<RequestIdentifier, BatchedRequest> batchedRequests;
 
     mutable std::vector<BatchedRequest> batchedRequests;
   };

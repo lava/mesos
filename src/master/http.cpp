@@ -2832,6 +2832,25 @@ Future<Response> Master::Http::state(
     return redirect(request);
   }
 
+  BatchedRequest batchedRequest;
+  batchedRequest.request = request;
+
+  auto& handlers = inflightRequests[principal];
+  bool inserted;
+  decltype(handlers.end()) it;
+  std::tie(it, inserted) = handlers.insert(
+    std::make_pair(&readonly_http::state, ));
+
+  // An in-flight request already existed, no need
+  // to enqueue another one.
+  // NOTE: We can safely "forward cache" the reponse here
+  // because the computation of the state is still in the
+  // future, so all writes that already happened right
+  // now will be visible.
+  if (!inserted) {
+    return it->promise.future();
+  }
+
   // TODO(alexr): De-duplicate response processing when the principal is
   // identical, e.g., if "bob" asks for state three times in one batch,
   // ideally we only compute the response for "bob" once since they're all
@@ -2842,19 +2861,19 @@ Future<Response> Master::Http::state(
       {VIEW_ROLE, VIEW_FRAMEWORK, VIEW_TASK, VIEW_EXECUTOR, VIEW_FLAGS})
     .then(defer(
         master->self(),
-        [this, request](const Owned<ObjectApprovers>& approvers) {
-          return deferBatchedRequest(
-              &Master::ReadOnlyHandler::state,
-              request,
-              approvers);
+        [/*this, request*/batchedRequest](const Owned<ObjectApprovers>& approvers) {
+          batchedRequest.approvers = approvers;
+          return deferBatchedRequest(batchedRequest
+              /*&Master:ReadOnlyHandler::state, request, approvers*/);
         }));
 }
 
 
 Future<Response> Master::Http::deferBatchedRequest(
-    ReadOnlyRequestHandler handler,
+    BatchedRequest& batchedRequest
+    /*ReadOnlyRequestHandler handler,
     const Request& request,
-    const Owned<ObjectApprovers>& approvers) const
+    const Owned<ObjectApprovers>& approvers*/) const
 {
   bool scheduleBatch = batchedRequests.empty();
 
