@@ -2843,27 +2843,31 @@ Future<Response> Master::Http::state(
     .then(defer(
         master->self(),
         [this, request](const Owned<ObjectApprovers>& approvers) {
-          return deferStateRequest(request, approvers);
+          return deferBatchedRequest(
+              &Master::ReadOnlyHandler::state,
+              request,
+              approvers);
         }));
 }
 
 
-Future<Response> Master::Http::deferStateRequest(
+Future<Response> Master::Http::deferBatchedRequest(
+    ReadOnlyRequestHandler handler,
     const Request& request,
     const Owned<ObjectApprovers>& approvers) const
 {
-  bool scheduleBatch = batchedStateRequests.empty();
+  bool scheduleBatch = batchedRequests.empty();
 
   // Add an element to the batched state requests.
   Promise<Response> promise;
   Future<Response> future = promise.future();
-  batchedStateRequests.push_back(
-      BatchedStateRequest{request, approvers, std::move(promise)});
+  batchedRequests.push_back(
+      BatchedRequest {handler, request, approvers, std::move(promise)});
 
   // Schedule processing of batched requests if not yet scheduled.
   if (scheduleBatch) {
     dispatch(master->self(), [this]() {
-      processStateRequestsBatch();
+      processRequestsBatch();
     });
   }
 
@@ -3013,7 +3017,7 @@ process::http::Response Master::ReadOnlyHandler::state(
 }
 
 
-void Master::Http::processStateRequestsBatch() const
+void Master::Http::processRequestsBatch() const
 {
   CHECK(!batchedStateRequests.empty())
     << "Bug in state batching logic: No requests to process";
@@ -3025,10 +3029,14 @@ void Master::Http::processStateRequestsBatch() const
   //
   // TODO(alexr): Consider moving `BatchedStateRequest`'s fields into
   // `process::async` once it supports moving.
-  foreach (BatchedStateRequest& request, batchedStateRequests) {
+  foreach (BatchedRequest& request, batchedRequests) {
     request.promise.associate(process::async(
-        &Master::ReadOnlyHandler::state,
-        readonlyHandler,
+        [this] (ReadOnlyRequestHandler handler,
+                process::http::Request request,
+                process::Owned<ObjectApprovers> approvers) {
+          return (readonlyHandler.*handler)(request, approvers);
+        },
+        request.handler,
         request.request,
         request.approvers));
   }
@@ -3040,12 +3048,12 @@ void Master::Http::processStateRequestsBatch() const
   // NOTE: There is the potential for deadlock since we are blocking 1 working
   // thread here, see MESOS-8256.
   vector<Future<Response>> responses;
-  foreach (const BatchedStateRequest& request, batchedStateRequests) {
+  foreach (const BatchedRequest& request, batchedRequests) {
     responses.push_back(request.promise.future());
   }
   process::await(responses).await();
 
-  batchedStateRequests.clear();
+  batchedRequests.clear();
 }
 
 
