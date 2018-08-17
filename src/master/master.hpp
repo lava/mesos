@@ -1399,8 +1399,29 @@ private:
 
     // /state
     process::http::Response state(
+        const process::http::Request& request,
+        const process::Owned<ObjectApprovers>& approvers) const;
+
+    // /state-summary
+    process::http::Response stateSummary(
       const process::http::Request& request,
       const process::Owned<ObjectApprovers>& approvers) const;
+
+    // /tasks
+    // process::http::Response tasks(
+    //     const Master* master,
+    //     const process::http::Request& request,
+    //     const process::Owned<ObjectApprovers>& approvers) const;
+
+    // /slaves
+    // process::http::Response slaves(
+    //     const process::http::Request& request,
+    //     const process::Owned<ObjectApprovers>& approvers) const;
+
+    // /frameworks
+    // process::http::Response frameworks(
+    //     const process::http::Request& request,
+    //     const process::Owned<ObjectApprovers>& approvers) const;
 
   private:
     const Master* master;
@@ -1493,6 +1514,8 @@ private:
             principal) const;
 
     // /master/state-summary
+    //
+    // NOTE: Requests to this endpoint are batched.
     process::Future<process::http::Response> stateSummary(
         const process::http::Request& request,
         const Option<process::http::authentication::Principal>&
