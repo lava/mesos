@@ -31,12 +31,14 @@
 #include <process/mime.hpp>
 #include <process/owned.hpp>
 #include <process/pid.hpp>
+#include <process/perf_tracer.hpp>
 
 #include <stout/duration.hpp>
 #include <stout/hashmap.hpp>
 #include <stout/lambda.hpp>
 #include <stout/option.hpp>
 #include <stout/synchronized.hpp>
+
 
 namespace process {
 
@@ -494,6 +496,14 @@ private:
 
   // Process PID.
   UPID pid;
+
+  // Optional perf tracing instrumentation.
+public:
+  void installRecorder(std::shared_ptr<LibprocessTracer> p);
+  std::shared_ptr<LibprocessTracer> uninstallRecorder();
+
+// "private"
+  std::shared_ptr<LibprocessTracer> recorder;
 };
 
 

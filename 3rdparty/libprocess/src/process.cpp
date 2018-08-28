@@ -2743,6 +2743,7 @@ void ProcessManager::handle(
     // order of requests to account for HTTP/1.1 pipelining.
     dispatch(proxy, &HttpProxy::handle, promise->future(), *request);
 
+
     // TODO(benh): Use the sender PID in order to capture
     // happens-before timing relationships for testing.
     deliver(receiver, new HttpEvent(request, promise));
@@ -2999,12 +3000,26 @@ void ProcessManager::resume(ProcessBase* process)
       // Determine if we should terminate.
       terminate = event->is<TerminateEvent>();
 
+      if (event->is<DispatchEvent>() &&
+          event->as<DispatchEvent>().recorder) {
+        process->recorder = event->as<DispatchEvent>().recorder;
+      }
+
       // Now service the event. In the event that the process
       // throws an exception, we will abort the program.
       //
       // TODO(bmahler): Consider providing recovery mechanisms.
       try {
+        if (process->recorder) {
+          process->recorder->enable();
+        }
+
         process->serve(std::move(*event));
+
+        if (process->recorder) {
+          process->recorder->disable();
+          process->recorder.reset();
+        }
       } catch (const std::exception& e) {
         LOG(FATAL) << "Aborting libprocess: '" << process->pid << "'"
                    << " threw exception: " << e.what();
@@ -3016,6 +3031,7 @@ void ProcessManager::resume(ProcessBase* process)
       delete event;
     }
   }
+
 
   // Clear the reference before we cleanup!
   reference = ProcessReference();
@@ -3561,6 +3577,22 @@ void ProcessBase::send(
 }
 
 
+void ProcessBase::installRecorder(
+    std::shared_ptr<LibprocessTracer> p)
+{
+  recorder = std::move(p);
+}
+
+std::shared_ptr<LibprocessTracer>
+ProcessBase::uninstallRecorder()
+{
+  // FIXME - add some atomics here.
+  std::shared_ptr<LibprocessTracer> tmp;
+  std::swap(recorder, tmp);
+  return tmp;
+}
+
+
 void ProcessBase::consume(MessageEvent&& event)
 {
   if (handlers.message.count(event.message.name) > 0) {
@@ -4044,6 +4076,12 @@ void dispatch(
   process::initialize();
 
   DispatchEvent* event = new DispatchEvent(std::move(f), functionType);
+  if (__process__ && __process__->recorder) {
+    VLOG(1) << "Carrying forward recorder from " << __process__->self()
+            << " to " << pid;
+
+    event->recorder = __process__->recorder;
+  }
   process_manager->deliver(pid, event, __process__);
 }
 

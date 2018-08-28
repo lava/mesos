@@ -230,6 +230,7 @@ libprocess_la_SOURCES =		\
   src/metrics/metrics.cpp	\
   src/mime.cpp			\
   src/mpsc_linked_queue.hpp	\
+  src/perf_tracer.cpp		\
   src/pid.cpp			\
   src/posix/io.cpp		\
   src/posix/poll_socket.cpp	\

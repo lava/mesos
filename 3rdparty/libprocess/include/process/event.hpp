@@ -18,11 +18,13 @@
 #include <process/future.hpp>
 #include <process/http.hpp>
 #include <process/message.hpp>
+#include <process/perf_tracer.hpp>
 #include <process/socket.hpp>
 
 #include <stout/abort.hpp>
 #include <stout/json.hpp>
 #include <stout/lambda.hpp>
+
 
 namespace process {
 
@@ -203,6 +205,8 @@ struct DispatchEvent : Event
   std::unique_ptr<lambda::CallableOnce<void(ProcessBase*)>> f;
 
   Option<const std::type_info*> functionType;
+
+  std::shared_ptr<LibprocessTracer> recorder;
 };
 
 
