@@ -37,6 +37,8 @@
 #include <stout/lambda.hpp>
 #include <stout/option.hpp>
 #include <stout/synchronized.hpp>
+#include <stout/recorder.hpp>
+
 
 namespace process {
 
@@ -494,6 +496,14 @@ private:
 
   // Process PID.
   UPID pid;
+
+  // Optional perf tracing instrumentation.
+public:
+  void installRecorder(std::unique_ptr<observatory::ThreadAwareRecorder> p);
+  std::unique_ptr<observatory::ThreadAwareRecorder> uninstallRecorder();
+
+private:
+  std::unique_ptr<observatory::ThreadAwareRecorder> recorder;
 };
 
 

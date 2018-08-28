@@ -2713,16 +2713,35 @@ void ProcessManager::handle(
     }
   }
 
-  if (use(receiver)) {
+  if (ProcessBase* base = use(receiver)) {
     // The promise is created here but its ownership is passed
     // into the HttpEvent created below.
     Promise<Response>* promise(new Promise<Response>());
+
+    if (request->url.path == "/master/state") {
+      LOG(INFO) << "Installing perf recorder for /state request.";
+
+      observatory::CounterType cycles = observatory::CounterType::Cycles;
+      base->installRecorder(std::unique_ptr<observatory::ThreadAwareRecorder>(
+          new observatory::ThreadAwareRecorder(500, cycles)));
+
+      promise->future().onAny([base] {
+        LOG(INFO) << "Removing perf recorder for /state request.";
+        std::unique_ptr<observatory::ThreadAwareRecorder> p =
+            base->uninstallRecorder();
+
+        if (p) {
+          p->drain("perf.data");
+        }
+      });
+    }
 
     PID<HttpProxy> proxy = socket_manager->proxy(socket);
 
     // Enqueue the response with the HttpProxy so that it respects the
     // order of requests to account for HTTP/1.1 pipelining.
     dispatch(proxy, &HttpProxy::handle, promise->future(), *request);
+
 
     // TODO(benh): Use the sender PID in order to capture
     // happens-before timing relationships for testing.
@@ -2985,7 +3004,15 @@ void ProcessManager::resume(ProcessBase* process)
       //
       // TODO(bmahler): Consider providing recovery mechanisms.
       try {
+        if (process->recorder) {
+          process->recorder->enable();
+        }
+
         process->serve(std::move(*event));
+
+        if (process->recorder) {
+          process->recorder->disable();
+        }
       } catch (const std::exception& e) {
         LOG(FATAL) << "Aborting libprocess: '" << process->pid << "'"
                    << " threw exception: " << e.what();
@@ -3539,6 +3566,22 @@ void ProcessBase::send(
 
   // Encode and transport outgoing message.
   transport(pid, to, std::move(name), std::move(data), this);
+}
+
+
+void ProcessBase::installRecorder(
+    std::unique_ptr<observatory::ThreadAwareRecorder> p)
+{
+  recorder = std::move(p);
+}
+
+std::unique_ptr<observatory::ThreadAwareRecorder>
+ProcessBase::uninstallRecorder()
+{
+  // FIXME - add some atomics here.
+  std::unique_ptr<observatory::ThreadAwareRecorder> tmp;
+  std::swap(recorder, tmp);
+  return tmp;
 }
 
 
