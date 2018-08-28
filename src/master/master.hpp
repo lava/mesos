@@ -1890,10 +1890,14 @@ private:
     // installation, we take some extra care to keep the backlog small.
     // In particular, all read-only requests are batched and executed in
     // parallel, instead of going through the master queue separately.
-
+    //
+    // NOTE: From an interface perspective, it would be cleaner to have
+    // this return a JSON::Object and wrap it in the appropriate accept
+    // format and jsonp later, but the overhead can be very noticable,
+    // especially for the `/state` endpoint.
     typedef process::http::Response
       (Master::ReadOnlyHandler::*ReadOnlyRequestHandler)(
-          const process::http::Request&,
+          const process::http::Request& request,
           const process::Owned<ObjectApprovers>&) const;
 
     process::Future<process::http::Response> deferBatchedRequest(
@@ -1903,15 +1907,125 @@ private:
 
     void processRequestsBatch() const;
 
-    struct BatchedRequest
-    {
+    struct BatchedRequest {
       ReadOnlyRequestHandler handler;
       process::http::Request request;
       process::Owned<ObjectApprovers> approvers;
       process::Promise<process::http::Response> promise;
     };
 
+    // TODO(bevers): Remove this after caching is extended to
+    // all batched endpoints.
     mutable std::vector<BatchedRequest> batchedRequests;
+
+    // Request cu
+
+    struct ReadonlyRequestIdentifier {
+      ReadOnlyRequestHandler handler;
+      process::http::Request request;
+      Option<process::http::authentication::Principal> principal;
+    };
+
+    struct ReadonlyRequestData {
+      process::Owned<ObjectApprovers> approvers;
+      process::Promise<process::http::Response> promise;
+    };
+
+    struct ReadonlyRequestIdentifierHash {
+      size_t operator()(const ReadonlyRequestIdentifier&) const;
+    };
+
+    struct ReadonlyRequestIdentifierEquals {
+      bool operator()(
+          const ReadonlyRequestIdentifier& lhs,
+          const ReadonlyRequestIdentifier& rhs) const;
+    };
+
+    struct PendingRequest {
+      ReadonlyRequestIdentifier identifier; // const
+      process::Owned<ObjectApprovers> approvers;
+      process::Promise<process::http::Response> promise;
+    };
+
+    struct UnauthorizedPendingRequest {
+      ReadonlyRequestIdentifier identifier; // const
+      process::Promise<process::http::Response> promise;
+    
+      PendingRequest augment(process::Owned<ObjectApprovers>) &&;
+    };
+
+
+    // TODO - make some kind of PointerValueHash<T> or even PointerMap<T> in stout
+    // to avoid the boilerplate.
+
+    struct ReadonlyRequestPointerHash {
+      // todo - move in .cpp
+      size_t operator()(const ReadonlyRequestIdentifier* p) const {
+        return ReadonlyRequestIdentifierHash()(*p);
+      }
+    };
+
+    struct ReadonlyRequestPointerEquals {
+      // todo - move in .cpp
+      size_t operator()(
+          const ReadonlyRequestIdentifier* lhs,
+          const ReadonlyRequestIdentifier* rhs) const {
+        return ReadonlyRequestIdentifierEquals()(*lhs, *rhs);
+      }
+    };
+
+    // These are conceptually just sets, but until we can use C++14's
+    // transparent comparators, we separate key and value types like this
+    // to be able to lookup with the same key in both maps.
+    //
+    // Store pointers instead of literal objects because we want
+    // to avoid moving around the promise in memory.
+    std::unordered_map<
+      ReadonlyRequestIdentifier*, // TODO - maybe this is over-optimization
+      std::unique_ptr<UnauthorizedPendingRequest>,
+      ReadonlyRequestPointerHash,
+      ReadonlyRequestPointerEquals> unauthorizedPendingRequests;
+
+    std::unordered_map<
+      ReadonlyRequestIdentifier*, // TODO - maybe this is over-optimization
+      std::unique_ptr<PendingRequest>,
+      ReadonlyRequestPointerHash,
+      ReadonlyRequestPointerEquals> pendingRequests;
+
+    // Returns either a fresh promise or the future
+    // of another, already pending request with the same parameters.
+    process::Future<process::http::Response> addPendingReadonlyRequest(
+        const process::http::Request& request,
+        const Option<process::http::authentication::Principal>&,
+        ReadOnlyRequestHandler handler,
+        std::initializer_list<authorization::Action>) const;
+
+
+    // Logically, this is just a set of 4-tuples (handler, request, approvers,
+    // promise). However, a C++ set doesn't allow modification of its keys, but
+    // we need the ability to associate results to the stored promises. So
+    // we store it as a map (handler, request) -> (approvers, promise).
+    //
+    // TODO(bevers): The naming is a bit off, as it isn't really a cache (i.e.
+    // something that contains recently returned responses) but instead it holds
+    // responses that will be returned in the near future.
+    typedef std::unordered_map<
+        ReadonlyRequestIdentifier,
+        ReadonlyRequestData,
+        ReadonlyRequestIdentifierHash,
+        ReadonlyRequestIdentifierEquals> ReadonlyRequestCache;
+
+    typedef typename ReadonlyRequestCache::iterator RequestCacheIterator;
+    typedef typename ReadonlyRequestCache::value_type RequestCacheValue;
+    typedef typename ReadonlyRequestCache::const_iterator
+      RequestCacheConstIterator;
+
+    mutable ReadonlyRequestCache readonlyRequestCache;
+
+    std::pair<RequestCacheIterator, bool> insertRequestIntoCache(
+        ReadOnlyRequestHandler handler,
+        const process::http::Request& request,
+        const Option<process::http::authentication::Principal>&) const;
   };
 
   Master(const Master&);              // No copying.

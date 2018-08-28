@@ -2344,22 +2344,49 @@ Future<Response> Master::Http::state(
     return redirect(request);
   }
 
-  // TODO(alexr): De-duplicate response processing when the principal is
-  // identical, e.g., if "bob" asks for state three times in one batch,
-  // ideally we only compute the response for "bob" once since they're all
-  // identical within a principal.
-  return ObjectApprovers::create(
-      master->authorizer,
-      principal,
-      {VIEW_ROLE, VIEW_FRAMEWORK, VIEW_TASK, VIEW_EXECUTOR, VIEW_FLAGS})
-    .then(defer(
-        master->self(),
-        [this, request](const Owned<ObjectApprovers>& approvers) {
-          return deferBatchedRequest(
-              &Master::ReadOnlyHandler::state,
-              request,
-              approvers);
-        }));
+  RequestCacheIterator iterator;
+  bool inserted;
+  std::tie(iterator, inserted) = insertRequestIntoCache(
+      &Master::ReadOnlyHandler::state,
+      request,
+      principal);
+
+  // Insertion into an unordered_map can invalidate all iterators if re-hashing
+  // occurs, but even in this case the standard guarantees that references to
+  // container elements remain valid. (Paragraph 23.2.5/14 [unord.req])
+  // auto& kv = *iterator;
+
+  const ReadonlyRequestIdentifier& identifier = iterator->first;
+  ReadonlyRequestData& data = iterator->second;
+
+  // NOTE: We can safely "forward cache" by skipping the second computation
+  // for this endpoint without, because the computation of the response is
+  // still in the future, so all writes that have already happened at this
+  // point in time will be visible.
+  if (inserted) {
+    ObjectApprovers::create(
+        master->authorizer,
+        principal,
+        {VIEW_ROLE, VIEW_FRAMEWORK, VIEW_TASK, VIEW_EXECUTOR, VIEW_FLAGS})
+      .then(defer(
+          master->self(),
+          [this, &data](const Owned<ObjectApprovers>& approvers)
+            -> Future<Nothing> {
+            data.approvers = approvers;
+            return Nothing();
+          }))
+      // The final defer is used to allow the batch to actually
+      // accumulate some requests, without it each time `approvers` are
+      // created it would just process a batch with a single request.
+      .then(defer(
+          master->self(),
+          [this] (const Nothing&) -> Future<Nothing> {
+            processRequestsBatch();
+            return Nothing();
+          }));
+  }
+
+  return data.promise.future();
 }
 
 
@@ -2387,10 +2414,39 @@ Future<Response> Master::Http::deferBatchedRequest(
 }
 
 
+std::pair<Master::Http::RequestCacheIterator, bool>
+Master::Http::insertRequestIntoCache(
+    ReadOnlyRequestHandler handler,
+    const Request& request,
+    const Option<Principal>& principal) const
+{
+  // TODO(bevers): Make appropriate constructors for these structs.
+  ReadonlyRequestIdentifier identifier;
+  identifier.handler = handler;
+  identifier.request = request;
+  identifier.principal = principal;
+
+  auto it = readonlyRequestCache.find(identifier);
+  if (it != readonlyRequestCache.end()) {
+    return std::make_pair(it, false);
+  }
+
+  // Use the default-constructed `data.promise` and `data.approvers`.
+  ReadonlyRequestData data;
+
+  bool _;
+  std::tie(it, _) = readonlyRequestCache.insert(
+    std::make_pair(std::move(identifier), std::move(data)));
+
+  return std::make_pair(it, true);
+}
+
+
 void Master::Http::processRequestsBatch() const
 {
-  CHECK(!batchedRequests.empty())
-    << "Bug in state batching logic: No requests to process";
+  if (readonlyRequestCache.empty()) {
+    return;
+  }
 
   // Produce the responses in parallel.
   //
@@ -2399,16 +2455,29 @@ void Master::Http::processRequestsBatch() const
   //
   // TODO(alexr): Consider moving `BatchedStateRequest`'s fields into
   // `process::async` once it supports moving.
-  foreach (BatchedRequest& request, batchedRequests) {
-    request.promise.associate(process::async(
+  vector<Future<Response>> responses;
+  vector<ReadonlyRequestIdentifier> readyRequests;
+
+  foreachpair (
+      const ReadonlyRequestIdentifier& identifier,
+      ReadonlyRequestData& data,
+      readonlyRequestCache) {
+    if (!data.approvers.get()) {
+      continue;
+    }
+
+    data.promise.associate(process::async(
         [this](ReadOnlyRequestHandler handler,
                const process::http::Request& request,
                const process::Owned<ObjectApprovers>& approvers) {
           return (readonlyHandler.*handler)(request, approvers);
         },
-        request.handler,
-        request.request,
-        request.approvers));
+        identifier.handler,
+        identifier.request,
+        data.approvers));
+
+    readyRequests.push_back(identifier);
+    responses.push_back(data.promise.future());
   }
 
   // Block the master actor until all workers have generated state responses.
@@ -2417,13 +2486,11 @@ void Master::Http::processRequestsBatch() const
   //
   // NOTE: There is the potential for deadlock since we are blocking 1 working
   // thread here, see MESOS-8256.
-  vector<Future<Response>> responses;
-  foreach (const BatchedRequest& request, batchedRequests) {
-    responses.push_back(request.promise.future());
-  }
   process::await(responses).await();
 
-  batchedRequests.clear();
+  for (auto& id : readyRequests) {
+    readonlyRequestCache.erase(id);
+  }
 }
 
 
@@ -2506,7 +2573,7 @@ string Master::Http::STATESUMMARY_HELP()
 
 
 Future<Response> Master::Http::stateSummary(
-    const Request& request,
+    const process::http::Request& request,
     const Option<Principal>& principal) const
 {
   // TODO(greggomann): Remove this check once the `Principal` type is used in
@@ -2523,17 +2590,79 @@ Future<Response> Master::Http::stateSummary(
     return redirect(request);
   }
 
-  return ObjectApprovers::create(
+  return addPendingReadonlyRequest(
+      request,
+      principal,
+      &Master::ReadOnlyHandler::stateSummary,
+      {VIEW_ROLE, VIEW_FRAMEWORK});
+}
+
+
+Future<Response> Master::Http::addPendingReadonlyRequest(
+    const process::http::Request& request,
+    const Option<process::http::authentication::Principal>& principal,
+    ReadOnlyRequestHandler handler,
+    std::initializer_list<authorization::Action> actions) const
+{
+  ReadonlyRequestIdentifier id;
+  id.handler = handler;
+  id.request = request;
+  id.principal = principal;
+
+  auto pendingIterator = pendingRequests.find(&id);
+  if (pendingIterator != pendingRequests.end()) {
+    return pendingIterator->second->promise.future();
+  }
+
+  auto unauthorizedPendingIterator = unauthorizedPendingRequests.find(&id);
+  if (unauthorizedPendingIterator != unauthorizedPendingRequests.end()) {
+    return unauthorizedPendingIterator->second->promise.future();
+  }
+
+  // TODO(bevers): Check if it's worth it to avoid the double lookup by
+  // using .insert() above.
+
+  auto rq = std::unique_ptr<UnauthorizedPendingRequest>(new UnauthorizedPendingRequest{});
+  rq->identifier = id;
+  // `rq->promise` is default-constructed.
+
+  ReadonlyRequestIdentifier* key = &rq->identifier; 
+
+  rq->promise.associate(ObjectApprovers::create(
       master->authorizer,
       principal,
-      {VIEW_ROLE, VIEW_FRAMEWORK})
+      actions)
     .then(defer(
         master->self(),
-        [this, request](const Owned<ObjectApprovers>& approvers) {
-          return deferBatchedRequest(
-              &Master::ReadOnlyHandler::stateSummary, request, approvers);
-        }));
+        [this, key](const Owned<ObjectApprovers>& approvers) {
+          auto it = unauthorizedPendingRequests.find(key);
+          CHECK(it != unauthorizedPendingRequests.end());
+
+          PendingRequest rq = std::move(*it->second).augment(approvers);
+          unauthorizedPendingRequests.erase(it); // todo - is this safe?
+
+          pendingRequests.insert(std::move(rq));
+
+          if (pendingRequests.size() == 1) {
+            defer(
+                master->self(),
+                &Master::Http::processRequestsBatch);          
+          }
+        }))
+    );
+
+  return rq->promise.future();
 }
+
+PendingRequest Master::Http::UnauthorizedPendingRequest::augment(process::Owned<ObjectApprovers>) &&
+{
+  PendingRequest pending;
+  pending.identifier = std::move(this->identifier);
+  pending.promise = std::mvoe(this->promise);
+
+  return pending;
+}
+
 
 
 // Returns a JSON object modeled after a role.
@@ -4284,6 +4413,34 @@ Future<Response> Master::Http::reconcileOperations(
 
   return OK(serialize(contentType, evolve(response)), stringify(contentType));
 }
+
+
+size_t Master::Http::ReadonlyRequestHash::operator()(
+    const Master::Http::ReadonlyRequestIdentifier& identifier) const
+{
+  // Ideally we'd like to just use the hash of `identifier.handler`, but
+  // implementing hashing for member function pointers is runnning into hairy
+  // architecture-specific issues pretty fast.
+  // (See e.g. https://stackoverflow.com/q/1328238/92560)
+  return std::hash<std::string>()(identifier.request.url.path);
+};
+
+
+bool Master::Http::ReadonlyRequestEquals::operator()(
+    const Master::Http::ReadonlyRequestIdentifier& lhs,
+    const Master::Http::ReadonlyRequestIdentifier& rhs) const
+{
+  // Note that we use quite a bit of domain-specific knowledge here:
+  // For a read-only endpoint, method is always "GET", the path will
+  // be the same if the handler is the same, and the body, keepalive, etc.
+  // are irrevelant.
+  //
+  // TODO(bevers): Consider moving a generalized version of this
+  // into `process::http`.
+  return lhs.handler == rhs.handler &&
+         lhs.principal == rhs.principal &&
+         lhs.request.headers == rhs.request.headers;
+};
 
 } // namespace master {
 } // namespace internal {
