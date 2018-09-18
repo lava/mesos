@@ -1908,6 +1908,7 @@ private:
 
     process::Future<process::http::Response> deferBatchedRequest(
         ReadOnlyRequestHandler handler,
+        const Option<process::http::authentication::Principal>& principal,
         const hashmap<std::string, std::string>& queryParameters,
         const process::Owned<ObjectApprovers>& approvers) const;
 
@@ -1917,6 +1918,7 @@ private:
     {
       ReadOnlyRequestHandler handler;
       hashmap<std::string, std::string> queryParameters;
+      Option<process::http::authentication::Principal> principal;
       process::Owned<ObjectApprovers> approvers;
       process::Promise<process::http::Response> promise;
     };
