@@ -20,6 +20,7 @@
 #include <string>
 #include <tuple>
 #include <vector>
+#include <iomanip>
 
 #include <mesos/resources.hpp>
 #include <mesos/version.hpp>
@@ -37,6 +38,8 @@
 #include <stout/duration.hpp>
 #include <stout/os.hpp>
 #include <stout/stopwatch.hpp>
+
+#include <observatory/instrumentation/pyplot_sink.hpp>
 
 #include "common/protobuf_utils.hpp"
 
@@ -500,6 +503,7 @@ TEST_P(MasterStateQuery_BENCHMARK_Test, GetState)
   }
 }
 
+static int testRunCounter = 0;
 
 class MasterActorResponsivenessDelay_BENCHMARK_Test
   : public MesosTest,
@@ -537,6 +541,9 @@ TEST_P(MasterActorResponsivenessDelay_BENCHMARK_Test, WithV0StateLoad)
     tasksPerCompletedFramework,
     numRequests,
     requestDelay) = GetParam();
+
+  ++testRunCounter;
+  string benchmarkPhase = "single";
 
   const string indicatorEndpoint = "flags";
   const string stateEndpoint = "state";
@@ -607,8 +614,9 @@ TEST_P(MasterActorResponsivenessDelay_BENCHMARK_Test, WithV0StateLoad)
 
   // A helper sending `numRequests` requests with `requestDelayMs` interval.
   // It prints statistics for the response times.
-  auto repeatedRequests = [singleRequest, numRequests, requestDelay](
-      const string& endpoint) {
+  auto repeatedRequests =
+    [singleRequest, numRequests, requestDelay, &benchmarkPhase](
+        const string& endpoint) {
     vector<Future<Duration>> responses;
     responses.reserve(numRequests);
 
@@ -629,6 +637,16 @@ TEST_P(MasterActorResponsivenessDelay_BENCHMARK_Test, WithV0StateLoad)
          << " [" << s->min << ", " << s->p25 << ", " << s->p50 << ", "
          << s->p75 << ", " << s->p90 << ", " << s->max << "]"
          << " from " << durations->size() << " measurements" << endl;
+
+    for (auto d : durations.get()) {
+      std::string tag =
+        //::testing::UnitTest::GetInstance()->current_test_info()->name() +
+	"batched_delay" +
+        std::string("__") + endpoint + "_" + benchmarkPhase;
+
+      observatory::PyplotSink::datapoint("/tmp/responsiveness_benchmarks.py", tag,
+          testRunCounter, d.secs());
+    }
   };
 
   // First measure the average response time for the `indicatorEndpoint` only
@@ -643,6 +661,8 @@ TEST_P(MasterActorResponsivenessDelay_BENCHMARK_Test, WithV0StateLoad)
   Clock::pause();
   Clock::settle();
   Clock::resume();
+
+  benchmarkPhase = "parallel";
 
   // Now measure the average response times when request for both
   // `indicatorEndpoint` and `stateEndpoint` are sent in parallel.
@@ -698,6 +718,9 @@ TEST_P(MasterActorResponsivenessMulticlient_BENCHMARK_Test, WithV0StateLoad)
 
   const string indicatorEndpoint = "flags";
   const string stateEndpoint = "state";
+
+  ++testRunCounter;
+  string benchmarkPhase = "single";
 
   // Disable authentication to avoid the overhead, since we don't care about
   // it in this test.
@@ -801,7 +824,7 @@ TEST_P(MasterActorResponsivenessMulticlient_BENCHMARK_Test, WithV0StateLoad)
     return durations;
   };
 
-  auto printStats = [](
+  auto printStats = [&benchmarkPhase](
       const vector<Duration>& durations, const string& endpoint) {
     Option<Statistics<Duration>> s = Statistics<Duration>::from(
           durations.cbegin(), durations.cend());
@@ -811,6 +834,15 @@ TEST_P(MasterActorResponsivenessMulticlient_BENCHMARK_Test, WithV0StateLoad)
          << " [" << s->min << ", " << s->p25 << ", " << s->p50 << ", "
          << s->p75 << ", " << s->p90 << ", " << s->max << "]"
          << " from " << s->count << " measurements" << endl;
+
+    for (auto d : durations) {
+      std::string tag =
+        "batched_multiclient" +
+        std::string("__") + endpoint + "_" + benchmarkPhase;
+
+      observatory::PyplotSink::datapoint("/tmp/responsiveness_benchmarks.py", tag,
+          testRunCounter, d.secs());
+    }
   };
 
   // First measure the average response time for the `indicatorEndpoint` only
@@ -831,6 +863,7 @@ TEST_P(MasterActorResponsivenessMulticlient_BENCHMARK_Test, WithV0StateLoad)
   // Now measure the average response times when request for both
   // `indicatorEndpoint` and `stateEndpoint` are sent in parallel.
   // Stop when `numRequests` to `stateEndpoint` have been sent.
+  benchmarkPhase = "parallel";
   stop.store(false);
 
   cout << "Launching " << numClients << " * " << numRequests << " '/"
