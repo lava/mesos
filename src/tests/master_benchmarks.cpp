@@ -582,7 +582,7 @@ TEST_P(MasterActorResponsivenessDelay_BENCHMARK_Test, WithV0StateLoad)
        << "' and '/" << indicatorEndpoint << "' requests will be sent"
        << " with " << requestDelay << " interval" << endl;
 
-  vector<Future<Nothing>> reregistered;
+  list<Future<Nothing>> reregistered;
 
   foreach (const Owned<TestSlave>& slave, slaves) {
     reregistered.push_back(slave->reregister());
@@ -619,8 +619,8 @@ TEST_P(MasterActorResponsivenessDelay_BENCHMARK_Test, WithV0StateLoad)
   auto repeatedRequests =
     [singleRequest, numRequests, requestDelay, &benchmarkPhase](
         const string& endpoint) {
-    vector<Future<Duration>> responses;
-    responses.reserve(numRequests);
+    list<Future<Duration>> responses;
+    //responses.reserve(numRequests);
 
     for (size_t i = 0; i < numRequests; ++i) {
       auto f = singleRequest(endpoint);
@@ -628,7 +628,7 @@ TEST_P(MasterActorResponsivenessDelay_BENCHMARK_Test, WithV0StateLoad)
       os::sleep(requestDelay);
     }
 
-    Future<vector<Duration>> durations = process::collect(responses);
+    Future<list<Duration>> durations = process::collect(responses);
     durations.await();
 
     Option<Statistics<Duration>> s = Statistics<Duration>::from(
@@ -755,7 +755,7 @@ TEST_P(MasterActorResponsivenessMulticlient_BENCHMARK_Test, WithV0StateLoad)
        << "' requests will be sent while constantly probing '/"
        << indicatorEndpoint << "'" << endl;
 
-  vector<Future<Nothing>> reregistered;
+  list<Future<Nothing>> reregistered;
 
   foreach (const Owned<TestSlave>& slave, slaves) {
     reregistered.push_back(slave->reregister());
@@ -873,7 +873,7 @@ TEST_P(MasterActorResponsivenessMulticlient_BENCHMARK_Test, WithV0StateLoad)
        << "Launching " << numRequests << " '/" << indicatorEndpoint << "'"
        << " requests" << endl;
 
-  vector<Future<vector<Duration>>> stateFinished;
+  list<Future<vector<Duration>>> stateFinished;
   while (numClients-- > 0) {
     stateFinished.push_back(async(repeateRequests, stateEndpoint, numRequests));
   }
@@ -911,6 +911,7 @@ INSTANTIATE_TEST_CASE_P(
         make_tuple(1, 18000, 2, 2000, 2)));
 
 
+/*
 // This test measures the performance of the `master::call::GetMetrics` v1 API
 // and the unversioned '/metrics/snapshot' endpoint. Frameworks are added to the
 // test agents in order to test the performance when large numbers of
@@ -1032,6 +1033,7 @@ TEST_P(MasterMetricsQuery_BENCHMARK_Test, GetMetrics)
          << contentType << " response took " << watch.elapsed() << endl;
   }
 }
+*/
 
 } // namespace tests {
 } // namespace internal {
