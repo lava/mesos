@@ -689,8 +689,16 @@ INSTANTIATE_TEST_CASE_P(
     AgentFrameworkTaskCount,
     MasterActorResponsivenessMulticlient_BENCHMARK_Test,
     ::testing::Values(
-        make_tuple(100, 10, 10, 10, 10, 50, 5),
-        make_tuple(1000, 10, 10, 10, 10, 10, 5)));
+        make_tuple(100, 10, 10, 10, 10, 50, 11),
+        make_tuple(100, 10, 10, 10, 10, 50, 12),
+        make_tuple(100, 10, 10, 10, 10, 50, 13),
+        make_tuple(100, 10, 10, 10, 10, 50, 14),
+        make_tuple(100, 10, 10, 10, 10, 50, 15),
+        make_tuple(100, 10, 10, 10, 10, 50, 16),
+        make_tuple(100, 10, 10, 10, 10, 50, 17),
+        make_tuple(100, 10, 10, 10, 10, 50, 18),
+        make_tuple(100, 10, 10, 10, 10, 50, 19),
+        make_tuple(100, 10, 10, 10, 10, 50, 20)));
 
 
 // This test indirectly measures how the Master actor is affected by serving
@@ -824,7 +832,7 @@ TEST_P(MasterActorResponsivenessMulticlient_BENCHMARK_Test, WithV0StateLoad)
     return durations;
   };
 
-  auto printStats = [&benchmarkPhase](
+  auto printStats = [&benchmarkPhase, numClients](
       const vector<Duration>& durations, const string& endpoint) {
     Option<Statistics<Duration>> s = Statistics<Duration>::from(
           durations.cbegin(), durations.cend());
@@ -835,13 +843,16 @@ TEST_P(MasterActorResponsivenessMulticlient_BENCHMARK_Test, WithV0StateLoad)
          << s->p75 << ", " << s->p90 << ", " << s->max << "]"
          << " from " << s->count << " measurements" << endl;
 
-    for (auto d : durations) {
-      std::string tag =
-        "batched_multiclient" +
-        std::string("__") + endpoint + "_" + benchmarkPhase;
+    if (endpoint != "state") {
+      cout << "Not dumping " << endpoint << endl;
+      return;
+    }
 
-      observatory::PyplotSink::datapoint("/tmp/responsiveness_benchmarks.py", tag,
-          testRunCounter, d.secs());
+    for (auto d : durations) {
+      std::string tag = "Mesos 1.7 (f35825c)";
+
+      observatory::PyplotSink::datapoint("/tmp/blogpost.py", tag,
+          numClients, d.secs());
     }
   };
 
