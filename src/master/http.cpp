@@ -38,6 +38,7 @@
 
 #include <process/async.hpp>
 #include <process/collect.hpp>
+#include <process/count_down_latch.hpp>
 #include <process/defer.hpp>
 #include <process/future.hpp>
 #include <process/help.hpp>
@@ -2392,37 +2393,62 @@ void Master::Http::processRequestsBatch() const
   CHECK(!batchedRequests.empty())
     << "Bug in state batching logic: No requests to process";
 
-  // Produce the responses in parallel.
+  // Produce the responses in parallel. To prevent deadlock
+  // and waiting for worker Processes to get scheduled, we
+  // let workers pick off items from the queue. This approach
+  // is deadlock-safe as we only block the master Process when
+  // we know that all of the items are executing or executed.
   //
-  // TODO(alexr): Consider abstracting this into `parallel_async` or
-  // `foreach_parallel`, see MESOS-8587.
+  // TODO(bmahler): Consider a primitive for parallel looping
+  // within a Process. See MESOS-8587.
   //
-  // TODO(alexr): Consider moving `BatchedStateRequest`'s fields into
-  // `process::async` once it supports moving.
-  foreach (BatchedRequest& request, batchedRequests) {
-    request.promise.associate(process::async(
-        [this](ReadOnlyRequestHandler handler,
-               const process::http::Request& request,
-               const process::Owned<ObjectApprovers>& approvers) {
-          return (readonlyHandler.*handler)(request, approvers);
-        },
-        request.handler,
-        request.request,
-        request.approvers));
+  // TODO(bmahler): We could alternatively make blocking
+  // safe (see MESOS-8256), but we still would likely benefit
+  // from a primitive that simplifies parallel looping.
+  auto nextItem = std::make_shared<std::atomic<size_t>>(0);
+  const size_t numItems = batchedRequests.size();
+  process::CountDownLatch completionLatch(numItems);
+
+  auto worker = [nextItem, numItems, &completionLatch, this]() {
+    size_t i;
+
+    while ((i = nextItem->fetch_add(1)) < numItems) {
+      BatchedRequest& request = batchedRequests[i];
+      const ReadOnlyRequestHandler& handler = request.handler;
+
+      // TODO(alexr): Move `request` and `approvers` once
+      // `process::async` has move support.
+      process::http::Response response =
+        (readonlyHandler.*handler)(
+            request.request,
+            request.approvers);
+
+      request.promise.set(std::move(response));
+
+      completionLatch.decrement();
+    }
+  };
+
+  // Spin up N-1 workers.
+  const long workerCount = process::workers();
+  for (long i = 0; i < workerCount - 1; ++i) {
+    process::async(worker);
   }
 
-  // Block the master actor until all workers have generated state responses.
-  // It is crucial not to allow the master actor to continue and possibly
-  // modify its state while a worker is reading it.
-  //
-  // NOTE: There is the potential for deadlock since we are blocking 1 working
-  // thread here, see MESOS-8256.
-  vector<Future<Response>> responses;
-  foreach (const BatchedRequest& request, batchedRequests) {
-    responses.push_back(request.promise.future());
-  }
-  process::await(responses).await();
+  // Lastly, run the Nth worker on the master's thread, since
+  // we already have a libprocess worker thread.
+  worker();
 
+  // Now, the worker loop executing on the master's thread
+  // compeleted, but it's possible that items are still
+  // being processed by other workers. To ensure workers
+  // are no longer going to touch master state, we must
+  // block on the latch. Once the latch is triggered, the
+  // workers are not done, but they won't touch any master
+  // state: they will only touch `nextItem`.
+  completionLatch.triggered().await();
+
+  // It's now safe to clear the queue and proceed.
   batchedRequests.clear();
 }
 
