@@ -2421,6 +2421,9 @@ void Master::Http::processRequestsBatch() const
   CHECK(!batchedRequests.empty())
     << "Bug in state batching logic: No requests to process";
 
+  std::cout << "Processing batch with " << batchedRequests.size()
+            << " elements." << std::endl;
+
   // Produce the responses in parallel.
   //
   // TODO(alexr): Consider abstracting this into `parallel_async` or
