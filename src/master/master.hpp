@@ -1389,6 +1389,10 @@ private:
   // Inner class used to namespace HTTP handlers that do not change the
   // underlying master object.
   //
+  // Endpoints served by this handler are only permitted to depend on
+  // the request query parameters and the authorization filters to
+  // make caching of responses possible.
+  //
   // NOTE: Most member functions of this class are not routed directly but
   // dispatched from their corresponding handlers in the outer `Http` class.
   // This is because deciding whether an incoming request is read-only often
@@ -1401,32 +1405,32 @@ private:
 
     // /frameworks
     process::http::Response frameworks(
-        const process::http::Request& request,
+        const hashmap<std::string, std::string>& queryParameters,
         const process::Owned<ObjectApprovers>& approvers) const;
 
     // /roles
     process::http::Response roles(
-        const process::http::Request& request,
+        const hashmap<std::string, std::string>& queryParameters,
         const process::Owned<ObjectApprovers>& approvers) const;
 
     // /slaves
     process::http::Response slaves(
-        const process::http::Request& request,
+        const hashmap<std::string, std::string>& queryParameters,
         const process::Owned<ObjectApprovers>& approvers) const;
 
     // /state
     process::http::Response state(
-        const process::http::Request& request,
+        const hashmap<std::string, std::string>& queryParameters,
         const process::Owned<ObjectApprovers>& approvers) const;
 
     // /state-summary
     process::http::Response stateSummary(
-        const process::http::Request& request,
+        const hashmap<std::string, std::string>& queryParameters,
         const process::Owned<ObjectApprovers>& approvers) const;
 
     // /tasks
     process::http::Response tasks(
-        const process::http::Request& request,
+        const hashmap<std::string, std::string>& queryParameters,
         const process::Owned<ObjectApprovers>& approvers) const;
 
   private:
@@ -1899,12 +1903,12 @@ private:
 
     typedef process::http::Response
       (Master::ReadOnlyHandler::*ReadOnlyRequestHandler)(
-          const process::http::Request&,
+          const hashmap<std::string, std::string>&,
           const process::Owned<ObjectApprovers>&) const;
 
     process::Future<process::http::Response> deferBatchedRequest(
         ReadOnlyRequestHandler handler,
-        const process::http::Request& request,
+        const hashmap<std::string, std::string>& queryParameters,
         const process::Owned<ObjectApprovers>& approvers) const;
 
     void processRequestsBatch() const;
@@ -1912,7 +1916,7 @@ private:
     struct BatchedRequest
     {
       ReadOnlyRequestHandler handler;
-      process::http::Request request;
+      hashmap<std::string, std::string> queryParameters;
       process::Owned<ObjectApprovers> approvers;
       process::Promise<process::http::Response> promise;
     };
