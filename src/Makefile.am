@@ -2313,7 +2313,7 @@ endif
 test_helper_CPPFLAGS = $(mesos_tests_CPPFLAGS)
 test_helper_LDADD = libmesos.la $(mesos_tests_LDADD)
 
-check_PROGRAMS += mesos-tests
+check_PROGRAMS += mesos-tests mesos-whitebox-tests
 
 # LDFLAGS to be used for the module libraries.
 MESOS_MODULE_LDFLAGS = -release $(PACKAGE_VERSION) -shared
@@ -2508,7 +2508,7 @@ mesos_tests_SOURCES =						\
   tests/master_allocator_tests.cpp				\
   tests/master_authorization_tests.cpp				\
   tests/master_benchmarks.cpp					\
-  tests/master_contender_detector_tests.cpp			\
+  tests/master_contender_detector_tests.cpp     \
   tests/master_maintenance_tests.cpp				\
   tests/master_quota_tests.cpp					\
   tests/master_slave_reconciliation_tests.cpp			\
@@ -2610,6 +2610,25 @@ mesos_tests_SOURCES =						\
   tests/containerizer/rootfs.hpp				\
   tests/containerizer/setns_test_helper.hpp			\
   tests/containerizer/volume_sandbox_path_isolator_tests.cpp
+
+# Enable the master http tests to access private members of
+# `ProcessBase` in order to be able to inject events directly
+# into the actor queue.
+#
+# Ideally we would like to compile just this source file with
+# the `-fno-access-control` flag, but that's not supported
+# by Automake, and I haven't managed to have gtest detect the
+# additional test cases when compiling as auxiliary library.
+#
+#     https://www.gnu.org/software/automake/manual/html_node/Per_002dObject-Flags.html
+#
+mesos_whitebox_tests_SOURCES = \
+  tests/master_http_tests.cpp \
+  tests/main.cpp
+
+mesos_whitebox_tests_CXXFLAGS = $(mesos_tests_CXXFLAGS) -fPIC -fno-access-control
+mesos_whitebox_tests_CPPFLAGS = $(mesos_tests_CPPFLAGS)
+mesos_whitebox_tests_LDADD = $(mesos_tests_LDADD)
 
 if ENABLE_XFS_DISK_ISOLATOR
 mesos_tests_SOURCES +=						\
@@ -2826,6 +2845,6 @@ endif
 
 clean-local: clean-java clean-python
 
-tests: all $(check_PROGRAMS) mesos-tests
+tests: all $(check_PROGRAMS) mesos-tests mesos-whitebox-tests
 
 .PHONY: $(PHONY_TARGETS)
