@@ -4719,8 +4719,11 @@ TYPED_TEST(SlaveRecoveryTest, RestartBeforeContainerizerLaunch)
 // offers.
 TYPED_TEST(SlaveRecoveryTest, AgentReconfigurationWithRunningTask)
 {
+  Clock::pause();
+
   // Start a master.
-  Try<Owned<cluster::Master>> master = this->StartMaster();
+  master::Flags masterFlags;
+  Try<Owned<cluster::Master>> master = this->StartMaster(masterFlags);
   ASSERT_SOME(master);
 
   // Start a framework.

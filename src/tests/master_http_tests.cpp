@@ -22,6 +22,8 @@
 #include <process/event.hpp>
 #include <process/future.hpp>
 #include <process/http.hpp>
+
+/*
 #include <process/owned.hpp>
 #include <process/process.hpp>
 
@@ -84,7 +86,9 @@ TEST_F(MasterHttpTest, ParallelState)
   Try<Owned<cluster::Master>> master = StartMaster();
   ASSERT_SOME(master);
 
-  ProcessBase* masterProcess = master.get()->master.get();
+  // TODO(bevers): We probably want to make this public in cluster.hpp
+  // instead of accessing the private field here.
+  master::Master& masterPid = master.get()->master.get();
 
   Clock::pause();
 
@@ -186,16 +190,15 @@ TEST_F(MasterHttpTest, Jsonp)
 // values for `limit`, `offset` or `order` parameters return different results.
 TEST_F(MasterHttpTest, QueryParameters)
 {
-  /* (query processing in request handler)
-  Result<int> result = numify<int>(query.get("limit"));
-  size_t limit = result.isSome() ? result.get() : TASK_LIMIT;
-
-  result = numify<int>(query.get("offset"));
-  size_t offset = result.isSome() ? result.get() : 0;
-
-  Option<string> order = query.get("order");
-  string _order = order.isSome() && (order.get() == "asc") ? "asc" : "des";
-  */
+  // Query processing copied from RequestHandler
+  // Result<int> result = numify<int>(query.get("limit"));
+  // size_t limit = result.isSome() ? result.get() : TASK_LIMIT;
+  //
+  // result = numify<int>(query.get("offset"));
+  // size_t offset = result.isSome() ? result.get() : 0;
+  //
+  // Option<string> order = query.get("order");
+  // string _order = order.isSome() && (order.get() == "asc") ? "asc" : "des";
 
   // TODO(bevers): Create the actual test.
 }
@@ -203,3 +206,5 @@ TEST_F(MasterHttpTest, QueryParameters)
 } // namespace tests {
 } // namespace internal {
 } // namespace mesos {
+
+*/

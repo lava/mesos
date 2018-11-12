@@ -90,6 +90,14 @@ public:
       const Option<std::shared_ptr<process::RateLimiter>>&
         slaveRemovalLimiter = None());
 
+  // This overload of `start()` allows the caller to allocate the
+  // initial master object itself.
+  // In principle, it could be extended to accept the same arguments
+  // as its companion above, but it does not yet because there currently
+  // is no use case for it.
+  //static Try<process::Owned<Master>> start(
+  //  Owned<mesos::master::Master> master);
+
   ~Master();
 
   // Returns a new master detector for this instance of master.
