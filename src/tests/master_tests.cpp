@@ -9339,6 +9339,103 @@ TEST_F(MasterTest, TaskStateMetrics)
 }
 
 
+class LoadTestActor : public process::Process<LoadTestActor>
+{
+public:
+  void request(const UPID& pid, const char* endpoint)
+  {
+    // todo - take headers and query parameters as arguments,
+    // so we can also test those.
+    Future<Response> response = process::http::get(
+      pid,
+      endpoint,
+      None(),
+      createBasicAuthHeaders(DEFAULT_CREDENTIAL));
+
+    requestResponsePairs.insert(endpoint, response);
+  }
+
+  // endpoint -> responses
+  std::multimap<std::string, Future<process::http::Response>>
+    requestResponsePairs;
+};
+
+
+// This test is designed to verify that the request batching
+// mechanism in mesos master works correctly, i.e. cache-able
+// requests are cached and more importantly non-cacheable
+// requests actually return different responses.
+// This test is probabilistic because we have currently no
+// way of ensuring that the batching code path is actually hit.
+// Therefore it is flaky by design, but in the "nice" direction,
+// i.e. it can generate false positives but no false negatives.
+TEST_F(MasterTest, SimultaneousBatchedRequests)
+{
+  // Create a small cluster with a master, slave and
+  // framework so that `/state` etc. can return more than just
+  // an empty array.
+  master::Flags masterFlags = CreateMasterFlags();
+  Try<Owned<cluster::Master>> master = StartMaster(masterFlags);
+  ASSERT_SOME(master);
+
+  Owned<MasterDetector> detector = master.get()->createDetector();
+
+  slave::Flags slaveFlags = CreateSlaveFlags();
+
+  Fetcher fetcher(slaveFlags);
+
+  Try<MesosContainerizer*> _containerizer =
+    MesosContainerizer::create(slaveFlags, true, &fetcher);
+  ASSERT_SOME(_containerizer);
+  Owned<slave::Containerizer> containerizer(_containerizer.get());
+
+  Try<Owned<cluster::Slave>> slave =
+    StartSlave(detector.get(), containerizer.get(), slaveFlags);
+  ASSERT_SOME(slave);
+
+
+  // Create a new actor to run the reqeuests and collect the results
+  Clock::pause();
+  LoadTestActor* loadTestActor = new LoadTestActor();
+  process::spawn(loadTestActor);
+
+  std::vector<const char*> endpoints {
+      "/state", "/state-summary", "/frameworks", "/slaves", "/roles"};
+
+  constexpr int REQUESTS_PER_ENDPOINT = 10;
+  foreach (const char* endpoint, endpoints) {
+    for (int i=0; i < REQUESTS_PER_ENDPOINT; ++i) {
+      // Use `delay()` so the requests are not started yet.
+      process::delay(
+          requestsActor,
+          Seconds(1),
+          &LoadTestActor::request,
+          master->get().pid,
+          endpoint);
+    }
+  }
+
+  // Try to manufacture a situation where our requests are the only "thing"
+  // going on.
+  Clock::settle();
+  Clock::advance(Seconds(2));
+  Clock::settle();
+
+  foreach (const char* endpoint, endpoints) {
+    loadTestActor.requestResponsePairs::iterator begin, end;
+    std::tie(begin, end) =
+      loadTestActor.requestResponsePairs.equal_range(endpoint);
+
+    CHECK_EQ(std::distance(begin, end), REQUESTS_PER_ENDPOINT);
+
+    process::http::Response reference = (begin++)->second;
+    while (begin != end) {
+      CHECK_EQ(reference, begin->second);
+    }
+  }
+}
+
+
 class MasterTestPrePostReservationRefinement
   : public MasterTest,
     public WithParamInterface<bool> {
