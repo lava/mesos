@@ -2347,6 +2347,11 @@ Future<Response> Master::Http::state(
     const Request& request,
     const Option<Principal>& principal) const
 {
+  observatory::CounterType cycles = observatory::CounterType::Cycles;
+  process::__process__->installRecorder(
+      std::make_shared<process::LibprocessTracer>("perf.data", 500, cycles));
+  process::__process__->recorder->enable();
+
   // TODO(greggomann): Remove this check once the `Principal` type is used in
   // `ReservationInfo`, `DiskInfo`, and within the master's `principals` map.
   // See MESOS-7202.
