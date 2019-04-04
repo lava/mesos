@@ -44,10 +44,6 @@
 
 #include "examples/flags.hpp"
 
-// TODO(bevers): Write a version of `isTerminalState()` that is available
-// from public headers and can handle v1 protobufs.
-#include "internal/devolve.hpp"
-
 #include "logging/logging.hpp"
 
 using process::Owned;
@@ -62,6 +58,7 @@ using mesos::v1::AgentID;
 using mesos::v1::Credential;
 using mesos::v1::FrameworkID;
 using mesos::v1::FrameworkInfo;
+using mesos::v1::Label;
 using mesos::v1::Offer;
 using mesos::v1::OperationID;
 using mesos::v1::OperationState;
@@ -154,7 +151,7 @@ constexpr Duration RESUBSCRIPTION_INTERVAL = Seconds(2);
 //    left waiting for an offer from that agent forever.
 //
 //  - If the framework is killed or shut down before all reservations have been
-//    unreserved, these left-over reservation require manual cleanup.
+//    unreserved, these left-over reservations require manual cleanup.
 //
 //  - The framework does not currently suppress or revive offers.
 
@@ -168,10 +165,12 @@ public:
       const FrameworkInfo& framework,
       const string& master,
       const string& role,
-      const Option<Credential>& credential)
+      const Option<Credential>& credential,
+      bool exclusive = false)
     : framework_(framework),
       master_(master),
       role_(role),
+      role_exclusive(exclusive),
       credential_(credential)
   {
   }
@@ -187,6 +186,9 @@ public:
     reservationInfo.set_type(Resource::ReservationInfo::DYNAMIC);
     reservationInfo.set_role(role_);
     reservationInfo.set_principal(framework_.principal());
+    Label* label = reservationInfo.mutable_labels()->add_labels();
+    label->set_key("reservation_uuid");
+    label->set_value(id::UUID::random().toString());
 
     SchedulerTask task;
     task.stage = SchedulerTask::AWAITING_RESERVE_OFFER;
@@ -316,6 +318,15 @@ protected:
       Resources remaining(offer.resources());
       int reservations = 0, launches = 0, unreservations = 0;
       bool havePendingTasks = false;  // Whether any task awaits an offer.
+
+      // cleanup reservations from previous runs
+      if (role_exclusive_) {
+        if (remaining.reserved(role_).labels["reservation_uuid"] != resrvationUuid_) {
+          Resources unreservedWithWrongLabel; // = ...; (FIXME)
+          ADD_UNRESERVE(call, unreservedWithWrongLabel);
+          remaining -= unreservedWithWrongLabel;
+        }
+      }
 
       // For each pending task that does not yet have a reservation,
       // check whether the offer contains enough unreserved resources
@@ -697,6 +708,7 @@ private:
   FrameworkInfo framework_;
   string master_;
   string role_;
+  bool role_exclusive;  // See `role_exclusive` flag description below.
   Option<Credential> credential_;
 
   // Represents a task lifecycle from the scheduler's perspective, i.e.
@@ -749,6 +761,11 @@ public:
         "user",
         "The username under which to run tasks.");
 
+    add(&Flags::role_exclusive,
+        "role_exclusive",
+        "Assert that this is the only framework using the provided role.\n"
+        "This will cause ")
+
     add(&Flags::command,
         "command",
         "The command to run for each task.",
@@ -769,6 +786,7 @@ public:
   string resources;
   Option<string> user;
   int num_tasks;
+  bool role_exclusive;
 };
 
 
@@ -836,6 +854,7 @@ int main(int argc, char** argv)
       framework,
       flags.master,
       flags.role,
+      flags.role_exclusive,
       credential);
 
   for (int i=0; i < flags.num_tasks; ++i) {
