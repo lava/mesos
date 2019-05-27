@@ -87,13 +87,14 @@ Flags::Flags()
 
   add(&Flags::verify_cert,
       "verify_cert",
-      "Whether or not to verify peer certificates.",
+      "Whether or not to require and verify server certificates for "
+      "connections in client mode.",
       false);
 
   add(&Flags::require_cert,
       "require_cert",
-      "Whether or not to require peer certificates. Requiring a peer "
-      "certificate implies verifying it.",
+      "Whether or not to require and verify client certificates for "
+      "connections in server mode.",
       false);
 
   add(&Flags::verify_ipadd,
@@ -602,10 +603,20 @@ void reinitialize()
     }
 
     // Set SSL peer verification callback.
-    int mode = SSL_VERIFY_PEER;
+    int mode = SSL_VERIFY_NONE;
 
+    // We need `SSL_VERIFY_PEER` in server mode, otherwise the server
+    // will not send a client certificate request.
+    //
+    // NOTE: This relies on the implication `ssl_flags->require_cert` =>
+    // `ssl_flags->verify_cert`, since it changes behaviour for both
+    // server and client mode.
+    //
+    // NOTE: Don't worry too much about the logic here since all
+    // of the mode-setting code is going to be moved and simplified
+    // as part of this chain, just a few commits down the road.
     if (ssl_flags->require_cert) {
-      mode |= SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
+      mode = SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
     }
 
     SSL_CTX_set_verify(ctx, mode, &verify_callback);
@@ -723,11 +734,16 @@ SSL_CTX* context()
 
 Try<Nothing> verify(
     const SSL* const ssl,
+    Mode mode,
     const Option<string>& hostname,
     const Option<net::IP>& ip)
 {
   // Return early if we don't need to verify.
-  if (!ssl_flags->verify_cert) {
+  if (mode == Mode::CLIENT && !ssl_flags->verify_cert) {
+    return Nothing();
+  }
+
+  if (mode == Mode::SERVER && !ssl_flags->require_cert) {
     return Nothing();
   }
 
@@ -735,10 +751,11 @@ Try<Nothing> verify(
   // TODO(jmlvanre): handle this better. How about RAII?
   X509* cert = SSL_get_peer_certificate(ssl);
 
+  // NOTE: Even without this check, the OpenSSL handshake will not complete
+  // when connecting to servers that do not present a certificate, unless an
+  // anonymous cipher is used.
   if (cert == nullptr) {
-    return ssl_flags->require_cert
-      ? Error("Peer did not provide certificate")
-      : Try<Nothing>(Nothing());
+    return Error("Peer did not provide certificate");
   }
 
   if (SSL_get_verify_result(ssl) != X509_V_OK) {
