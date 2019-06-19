@@ -1671,7 +1671,7 @@ void SocketManager::link(
 
   if (connect) {
     CHECK_SOME(socket);
-    socket->connect(to.address)
+    socket->connect(to.address, to.host)
       .onAny(lambda::bind(
           &SocketManager::link_connect,
           this,
