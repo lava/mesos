@@ -1009,6 +1009,10 @@ Try<Nothing> configure_socket(
       return Nothing();
     }
 
+    if (mode == openssl::Mode::CLIENT && !ssl_flags->verify_cert) {
+      return Nothing();
+    }
+
     // Decide whether we want to verify the peer's IP or DNS name.
     X509_VERIFY_PARAM *param = SSL_get0_param(ssl);
     if (peer_hostname.isSome()) {
