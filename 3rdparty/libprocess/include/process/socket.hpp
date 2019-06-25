@@ -148,11 +148,6 @@ public:
    * configurable by the caller of the interface.
    */
   virtual Future<std::shared_ptr<SocketImpl>> accept() = 0;
-
-  virtual Future<Nothing> connect(
-      const Address& address,
-      const Option<std::string>& peer_hostname) = 0;
-
   virtual Future<size_t> recv(char* data, size_t size) = 0;
   virtual Future<size_t> send(const char* data, size_t size) = 0;
   virtual Future<size_t> sendfile(int_fd fd, off_t offset, size_t size) = 0;
@@ -361,18 +356,6 @@ public:
       });
   }
 
-  Future<Nothing> connect(const AddressType& address)
-  {
-    return impl->connect(address, None());
-  }
-
-  Future<Nothing> connect(
-      const AddressType& address,
-      const Option<std::string>& peer_hostname)
-  {
-    return impl->connect(address, peer_hostname);
-  }
-
   Future<size_t> recv(char* data, size_t size) const
   {
     return impl->recv(data, size);
@@ -426,6 +409,12 @@ public:
   operator Socket<network::Address>() const
   {
     return Socket<network::Address>(impl);
+  }
+
+  template<typename T>
+  std::shared_ptr<T> as()
+  {
+    return std::dynamic_pointer_cast<T>(impl);
   }
 
 private:
@@ -519,6 +508,16 @@ Try<Socket<unix::Address>> Socket<unix::Address>::create(
 #endif // __WINDOWS__
 
 } // namespace internal {
+
+// Connects the given socket to the specified address,
+// passing the provided TLS configuration if the socket
+// is a TLS socket, or ignoring it if the socket is a
+// regular socket.
+Future<Nothing> connect(
+    Socket,
+    const network::Address&,
+    const Option<std::string>& peer_hostname);
+
 } // namespace network {
 } // namespace process {
 

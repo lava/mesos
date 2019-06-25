@@ -1449,7 +1449,7 @@ Future<Connection> connect(
     return Failure("Failed to create socket: " + socket.error());
   }
 
-  return socket->connect(address, peer_hostname)
+  return network::connect(*socket, address, peer_hostname)
     .then([socket, address]() -> Future<Connection> {
       Try<network::Address> localAddress = socket->address();
       if (localAddress.isError()) {

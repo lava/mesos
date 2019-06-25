@@ -114,8 +114,7 @@ Future<std::shared_ptr<SocketImpl>> PollSocketImpl::accept()
 
 
 Future<Nothing> PollSocketImpl::connect(
-    const Address& address,
-    const Option<string>& /* peer_hostname */)
+    const Address& address)
 {
   Try<Nothing, SocketError> connect = network::connect(get(), address);
   if (connect.isError()) {

@@ -219,5 +219,22 @@ Future<Nothing> SocketImpl::send(const string& data)
 }
 
 } // namespace internal {
+
+Future<Nothing> connect(
+    Socket socket,
+    const network::Address& address,
+    const Option<std::string>& peer_hostname)
+{
+  switch (socket.kind()) {
+  case internal::SocketImpl::Kind::SSL:
+    return socket.as<internal::LibeventSSLSocketImpl>()
+      ->connect(address, peer_hostname);
+  case internal::SocketImpl::Kind::POLL:
+    return socket.as<internal::PollSocketImpl>()
+      ->connect(address);
+  }
+  UNREACHABLE();
+}
+
 } // namespace network {
 } // namespace process {

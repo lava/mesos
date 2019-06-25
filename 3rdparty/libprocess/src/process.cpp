@@ -1500,7 +1500,7 @@ void SocketManager::link_connect(
       }
 
       CHECK_SOME(poll_socket);
-      poll_socket->connect(to.address)
+      network::connect(*poll_socket, to.address, None())
         .onAny(lambda::bind(
             &SocketManager::link_connect,
             this,
@@ -1671,13 +1671,13 @@ void SocketManager::link(
 
   if (connect) {
     CHECK_SOME(socket);
-    socket->connect(to.address, to.host)
-      .onAny(lambda::bind(
-          &SocketManager::link_connect,
-          this,
-          lambda::_1,
-          socket.get(),
-          to));
+    network::connect(*socket, to.address, to.host)
+        .onAny(lambda::bind(
+            &SocketManager::link_connect,
+            this,
+            lambda::_1,
+            socket.get(),
+            to));
   }
 }
 
@@ -1929,7 +1929,9 @@ void SocketManager::send_connect(
       }
 
       CHECK_SOME(poll_socket);
-      Future<Nothing> connect = poll_socket->connect(message.to.address);
+      Future<Nothing> connect = network::connect(
+          *poll_socket, message.to.address, None());
+
       connect.onAny(lambda::bind(
           // TODO(benh): with C++14 we can use lambda instead of
           // `std::bind` and capture `message` with a `std::move`.
@@ -2033,7 +2035,7 @@ void SocketManager::send(Message&& message, const SocketImpl::Kind& kind)
 
   if (connect) {
     CHECK_SOME(socket);
-    socket->connect(address)
+    network::connect(*socket, address, message.to.host)
       .onAny(lambda::bind(
             // TODO(benh): with C++14 we can use lambda instead of
             // `std::bind` and capture `message` with a `std::move`.
